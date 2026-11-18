@@ -259,6 +259,9 @@ export function solveMath(input: string): { applicable: boolean; answer: string 
   );
   if (equation) return { applicable: true, answer: equation };
 
+  const wordProblem = solveWordProblem(text);
+  if (wordProblem) return wordProblem;
+
   const stripped = text
     .replace(/^(?:cu[aá]nto es|calcula|calcule|resuelve|cu[aá]l es(?: el resultado de)?)\s+/i, "")
     .replace(/[?¿]/g, "")
@@ -279,6 +282,147 @@ export function solveMath(input: string): { applicable: boolean; answer: string 
   }
 }
 
+function solveWordProblem(text: string): { applicable: boolean; answer: string } | null {
+  const lower = text.toLowerCase();
+
+  // "cuántas patas tienen 3 elefantes y 2 mesas"
+  if (/patas?|piernas?|ruedas?|ojos?|manos?/.test(lower)) {
+    const unit = /patas?/.test(lower)
+      ? "pata"
+      : /piernas?/.test(lower)
+        ? "pierna"
+        : /ruedas?/.test(lower)
+          ? "rueda"
+          : /ojos?/.test(lower)
+            ? "ojo"
+            : "mano";
+    const legsPer: Record<string, number> = {
+      elefante: 4,
+      elefantes: 4,
+      perro: 4,
+      perros: 4,
+      gato: 4,
+      gatos: 4,
+      caballo: 4,
+      caballos: 4,
+      vaca: 4,
+      vacas: 4,
+      mesa: 4,
+      mesas: 4,
+      silla: 4,
+      sillas: 4,
+      persona: 2,
+      personas: 2,
+      humano: 2,
+      humanos: 2,
+      pajaro: 2,
+      pajaros: 2,
+      pájaro: 2,
+      pájaros: 2,
+      bicicleta: 2,
+      bicicletas: 2,
+      auto: 4,
+      autos: 4,
+      carro: 4,
+      carros: 4,
+      coche: 4,
+      coches: 4,
+      triciclo: 3,
+      triciclos: 3,
+    };
+    const parts = [...lower.matchAll(/(\d+)\s+([a-záéíóúüñ]+)/gi)];
+    const lines: string[] = [];
+    let total = 0;
+    for (const part of parts) {
+      const count = Number(part[1]);
+      const noun = part[2];
+      const per = legsPer[noun];
+      if (!per) continue;
+      const subtotal = count * per;
+      total += subtotal;
+      lines.push(`${formatNumber(count)} ${noun} × ${formatNumber(per)} = ${formatNumber(subtotal)}`);
+    }
+    if (lines.length) {
+      return {
+        applicable: true,
+        answer: [
+          `**${formatNumber(total)} ${unit}${total === 1 ? "" : "s"}**`,
+          "",
+          ...lines.map((line, index) => `${index + 1}. ${line}`),
+          `Total: **${formatNumber(total)}**`,
+        ].join("\n"),
+      };
+    }
+  }
+
+  // "si tengo 3 manzanas y compro 5"
+  const haveBuy = lower.match(
+    /(?:tengo|hay)\s+(\d+)\s+\w+\s+y\s+(?:compro|agrego|sumo|añado|anado)\s+(\d+)/i,
+  );
+  if (haveBuy) {
+    const a = Number(haveBuy[1]);
+    const b = Number(haveBuy[2]);
+    return {
+      applicable: true,
+      answer: [
+        `**${formatNumber(a + b)}**`,
+        "",
+        `1. Empiezas con ${formatNumber(a)}`,
+        `2. Sumas ${formatNumber(b)}`,
+        `3. ${formatNumber(a)} + ${formatNumber(b)} = **${formatNumber(a + b)}**`,
+      ].join("\n"),
+    };
+  }
+
+  // "la mitad de 48" / "el doble de 7" / "el triple de 9"
+  const half = lower.match(/(?:la\s+)?mitad\s+de\s+(-?\d+(?:[.,]\d+)?)/i);
+  if (half) {
+    const value = Number(half[1].replace(",", ".")) / 2;
+    return {
+      applicable: true,
+      answer: `**${formatNumber(value)}**\n\nLa mitad de ${half[1]} es ${half[1]} ÷ 2 = **${formatNumber(value)}**.`,
+    };
+  }
+  const double = lower.match(/(?:el\s+)?doble\s+de\s+(-?\d+(?:[.,]\d+)?)/i);
+  if (double) {
+    const value = Number(double[1].replace(",", ".")) * 2;
+    return {
+      applicable: true,
+      answer: `**${formatNumber(value)}**\n\nEl doble de ${double[1]} es ${double[1]} × 2 = **${formatNumber(value)}**.`,
+    };
+  }
+  const triple = lower.match(/(?:el\s+)?triple\s+de\s+(-?\d+(?:[.,]\d+)?)/i);
+  if (triple) {
+    const value = Number(triple[1].replace(",", ".")) * 3;
+    return {
+      applicable: true,
+      answer: `**${formatNumber(value)}**\n\nEl triple de ${triple[1]} es ${triple[1]} × 3 = **${formatNumber(value)}**.`,
+    };
+  }
+
+  // Extract a bare arithmetic expression buried in words: "cuanto da 12 por 8"
+  const product = lower.match(/(-?\d+(?:[.,]\d+)?)\s*(?:por|×|x)\s*(-?\d+(?:[.,]\d+)?)/i);
+  if (product && !/%/.test(lower)) {
+    const a = Number(product[1].replace(",", "."));
+    const b = Number(product[2].replace(",", "."));
+    return {
+      applicable: true,
+      answer: `**${formatNumber(a * b)}**\n\n${formatNumber(a)} × ${formatNumber(b)} = **${formatNumber(a * b)}**.`,
+    };
+  }
+  const sum = lower.match(/(-?\d+(?:[.,]\d+)?)\s*(?:mas|más|\+)\s*(-?\d+(?:[.,]\d+)?)/i);
+  if (sum) {
+    const a = Number(sum[1].replace(",", "."));
+    const b = Number(sum[2].replace(",", "."));
+    return {
+      applicable: true,
+      answer: `**${formatNumber(a + b)}**\n\n${formatNumber(a)} + ${formatNumber(b)} = **${formatNumber(a + b)}**.`,
+    };
+  }
+
+  return null;
+}
+
 function mathHelp(): string {
   return [
     "Puedo resolver la cuenta aquí mismo, sin el modelo:",
@@ -288,6 +432,7 @@ function mathHelp(): string {
     "- una ecuación lineal: «2x + 5 = 17»",
     "- mcd o mcm: «mcd de 48 y 18»",
     "- una raíz: «raíz cuadrada de 144»",
+    "- un problema en palabras: «cuántas patas tienen 3 elefantes y 2 mesas»",
     "",
     "Escribe una de esas formas y la desarrollo paso a paso.",
   ].join("\n");

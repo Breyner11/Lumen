@@ -1,3 +1,5 @@
+import { isRelevant } from "@/lib/tools/relevance";
+
 export type WikiHit = {
   title: string;
   extract: string;
@@ -16,7 +18,7 @@ export async function lookupWikipedia(question: string): Promise<WikiHit | null>
     searchUrl.searchParams.set("action", "query");
     searchUrl.searchParams.set("list", "search");
     searchUrl.searchParams.set("srsearch", query);
-    searchUrl.searchParams.set("srlimit", "5");
+    searchUrl.searchParams.set("srlimit", "8");
     searchUrl.searchParams.set("format", "json");
     searchUrl.searchParams.set("utf8", "1");
     searchUrl.searchParams.set("origin", "*");
@@ -28,14 +30,19 @@ export async function lookupWikipedia(question: string): Promise<WikiHit | null>
     });
     if (!searchRes.ok) return null;
     const searchJson = (await searchRes.json()) as {
-      query?: { search?: Array<{ title: string }> };
+      query?: { search?: Array<{ title: string; snippet?: string }> };
     };
-    const titles = searchJson.query?.search?.map((item) => item.title) ?? [];
-    if (!titles.length) return null;
+    const candidates = searchJson.query?.search ?? [];
+    if (!candidates.length) return null;
 
-    for (const title of titles.slice(0, 3)) {
-      const summary = await pageSummary(title);
-      if (summary?.extract && summary.extract.length > 40) return summary;
+    for (const candidate of candidates.slice(0, 5)) {
+      if (!isRelevant(question, candidate.title, candidate.snippet ?? "")) continue;
+      const summary = await pageSummary(candidate.title);
+      if (!summary?.extract || summary.extract.length < 40) continue;
+      if (!isRelevant(question, summary.title, `${summary.description ?? ""} ${summary.extract}`)) {
+        continue;
+      }
+      return summary;
     }
     return null;
   } catch {

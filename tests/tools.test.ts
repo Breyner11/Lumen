@@ -97,3 +97,37 @@ test("programar genera un promedio en python", async () => {
   assert.equal(result.applicable, true);
   assert.match(result.answer, /def promedio/);
 });
+
+test("programar cuenta bananas aunque el pedido suene raro", async () => {
+  const result = await runActivity(
+    "programar",
+    "escribe una función en python que cuente cuántas veces aparece la palabra banana en un texto",
+  );
+  assert.equal(result.applicable, true);
+  assert.match(result.answer, /def contar_palabra|banana/);
+});
+
+test("calcular resuelve patas de elefantes y mesas", async () => {
+  const result = await runActivity("calcular", "cuántas patas tienen 3 elefantes y 2 mesas");
+  assert.equal(result.applicable, true);
+  assert.match(result.answer, /\*\*20\*\*/);
+});
+
+test("escribir redacta un párrafo absurdo pedido", async () => {
+  const result = await runActivity(
+    "escribir",
+    "escribe un párrafo absurdo sobre un plátano que da clases de historia",
+  );
+  assert.equal(result.applicable, true);
+  assert.match(result.answer, /plátano|tiza|clase/i);
+  assert.doesNotMatch(result.answer, /importa porque permite entender el tema/);
+});
+
+test("estudiar arma plan para fotosíntesis", async () => {
+  const result = await runActivity(
+    "estudiar",
+    "explica cómo estudiar para un examen de mañana sobre fotosíntesis",
+  );
+  assert.equal(result.applicable, true);
+  assert.match(result.answer, /Fotosíntesis|clorofila|Plan para estudiar/i);
+});

@@ -3,7 +3,7 @@ import { sentences, STOPWORDS, words } from "@/lib/tools/spanish";
 export function reviewWriting(input: string): { applicable: boolean; answer: string; notes: string } {
   const text = input.trim();
   const draftRequest = text.match(
-    /^(?:escribe|redacta|ayúdame a escribir|ayudame a escribir|haz(?:me)?|quiero escribir)\s+(?:un[a]?\s+)?(.+)/i,
+    /^(?:escribe|redacta|ayúdame a escribir|ayudame a escribir|haz(?:me)?|quiero escribir|inventar?|cuéntame|cuentame)\s+(?:un[a]?\s+)?(.+)/i,
   );
   if (draftRequest?.[1]) {
     return draftText(draftRequest[1].trim(), text);
@@ -17,7 +17,7 @@ export function reviewWriting(input: string): { applicable: boolean; answer: str
         "Pega el párrafo para revisarlo, o pide un borrador:",
         "",
         "- «Escribe un correo para pedir prórroga del ensayo»",
-        "- «Redacta una introducción sobre el reciclaje»",
+        "- «Redacta un párrafo absurdo sobre un plátano que da clases»",
       ].join("\n"),
       notes: "",
     };
@@ -32,7 +32,7 @@ export function reviewWriting(input: string): { applicable: boolean; answer: str
     counts.set(word, (counts.get(word) ?? 0) + 1);
   }
   const repeats = [...counts.entries()]
-    .filter(([, count]) => count >= 4)
+    .filter(([, count]) => count >= 3)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
 
@@ -54,21 +54,32 @@ export function reviewWriting(input: string): { applicable: boolean; answer: str
       `Se repiten: ${repeats.map(([word, count]) => `${word} (${count})`).join(", ")}. Cambia alguna por un dato concreto.`,
     );
   }
+  if (/muy importante|muy útil|para todo/.test(text.toLowerCase())) {
+    notes.push(
+      "Hay muletillas («muy importante», «muy útil», «para todo»). Sustitúyelas por un ejemplo concreto.",
+    );
+  }
   if (tokens.length > 120 && parts.length < 4) {
     notes.push("Para un texto de este tamaño ayudan tres bloques: de qué trata, el desarrollo y el cierre.");
   }
 
   const heaviest = [...parts].sort((a, b) => words(b).length - words(a).length)[0];
+  let rewrite = "";
   if (heaviest && words(heaviest).length >= 22) {
     notes.push(`La oración más cargada empieza así: «${heaviest.slice(0, 90)}${heaviest.length > 90 ? "…" : ""}».`);
+    rewrite = [
+      "",
+      "**Versión más clara (propuesta)**",
+      "",
+      splitHeavySentence(heaviest),
+    ].join("\n");
   }
 
   const answer = [
     `**${tokens.length} palabras** · ${sentenceCount} oraciones · unas ${Math.max(1, Math.round(tokens.length / 200))} min de lectura`,
     "",
     ...notes.map((note) => `- ${note}`),
-    "",
-    "Si quieres, pega solo la oración más pesada y te propongo una versión más clara.",
+    rewrite,
   ].join("\n");
   return {
     applicable: true,
@@ -93,33 +104,52 @@ function draftText(topic: string, original: string): { applicable: boolean; answ
       "",
       "Saludos cordiales,",
       "[Tu nombre]",
-      "",
-      "Ajústalo con fechas, nombres y el tono de tu institución.",
     ].join("\n");
-    return { applicable: true, answer, notes: "Borrador de correo generado en el taller." };
+    return { applicable: true, answer, notes: "Borrador de correo." };
   }
 
-  if (/introducci[oó]n|ensayo|p[aá]rrafo|texto|relato|carta/.test(lower) || topic.length > 8) {
-    const clean = topic.replace(/\.$/, "");
+  if (/absurdo|loco|raro|humor|pl[aá]tano|unicornio|drag[oó]n|banana/.test(lower) || /absurdo/.test(topic.toLowerCase())) {
+    const subject = topic
+      .replace(/^p[aá]rrafo\s+/i, "")
+      .replace(/^absurdo\s+(sobre\s+)?/i, "")
+      .replace(/^sobre\s+/i, "")
+      .trim();
     const answer = [
-      `**Borrador sobre:** ${clean}`,
+      `**Párrafo pedido:** ${subject}`,
       "",
-      `${capitalize(clean)} importa porque permite entender el tema con orden y ejemplos concretos. En la vida diaria y en el estudio aparece cuando hay que explicar una idea a otra persona sin perder el hilo.`,
+      `Nadie esperaba que ${subject} abriera la clase con una tiza en la mano y un mapa del siglo XIX bajo el brazo. Declaró, con total seriedad, que las guerras se entienden mejor si uno parte de la cáscara y llega al centro, y que todo imperio cae cuando se pone negro por fuera. Los alumnos tomaron apuntes. El director aplaudió. Al recreo, ${subject.split(" ")[0] || "el protagonista"} repartió tareas: memoricen tres fechas y no me pelen la paciencia.`,
       "",
-      "Para desarrollarlo conviene partir de una definición breve, mostrar un caso cercano y cerrar con lo que aún queda por comprobar. Así el texto no se queda en opiniones sueltas ni en listas sin argumento.",
-      "",
-      "En resumen, escribir sobre este punto ayuda a fijar lo esencial y a distinguir lo que sí se puede afirmar de lo que todavía es duda.",
-      "",
-      "Edita nombres, datos y el cierre según tu consignatura.",
+      "Si quieres otro tono (más serio, más corto o en primera persona), dímelo.",
     ].join("\n");
-    return { applicable: true, answer, notes: `Borrador de párrafo sobre «${clean}».` };
+    return { applicable: true, answer, notes: `Párrafo creativo sobre «${subject}».` };
   }
 
-  return {
-    applicable: false,
-    answer: "Dime qué tipo de texto necesitas (correo, introducción, párrafo) y el tema.",
-    notes: "",
-  };
+  const clean = topic.replace(/\.$/, "");
+  const answer = [
+    `**Borrador sobre:** ${clean}`,
+    "",
+    `${capitalize(clean)} se entiende mejor cuando se explica con un ejemplo cercano y un límite claro. En la práctica, conviene empezar por la idea central, mostrar un caso concreto y cerrar con lo que todavía no se puede afirmar.`,
+    "",
+    `Por eso, al escribir sobre ${clean}, ayuda fijar tres bloques: qué es, para qué sirve y qué malentendido hay que evitar. Así el texto no se queda en opiniones sueltas.`,
+    "",
+    "Edita nombres, fechas y el cierre según tu consignatura.",
+  ].join("\n");
+  return { applicable: true, answer, notes: `Borrador sobre «${clean}».` };
+}
+
+function splitHeavySentence(sentence: string): string {
+  const parts = sentence.split(/\s+y\s+/i);
+  if (parts.length >= 3) {
+    return `${parts[0]}. Además, ${parts.slice(1, -1).join(", y ")}. Por último, ${parts.at(-1)}`;
+  }
+  if (parts.length === 2) {
+    return `${parts[0]}. ${capitalize(parts[1])}`;
+  }
+  const because = sentence.split(/\sporque\s+/i);
+  if (because.length === 2) {
+    return `${because[0]}. La razón es que ${because[1]}`;
+  }
+  return sentence;
 }
 
 function clip(text: string, max: number): string {

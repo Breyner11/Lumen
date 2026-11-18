@@ -21,13 +21,27 @@ export function summarizeText(input: string): { applicable: boolean; answer: str
   const text = input.trim();
   const parts = sentences(text);
   const wordCount = words(text).length;
-  if (wordCount < 40 || parts.length < 3) {
+  if (wordCount < 8 && parts.length < 2) {
+    return {
+      applicable: false,
+      answer: [
+        "El texto todavía es corto para un resumen.",
+        "",
+        `Tiene ${wordCount} palabra${wordCount === 1 ? "" : "s"}. Pega al menos un par de oraciones o un apunte.`,
+      ].join("\n"),
+      notes: "",
+    };
+  }
+
+  if (parts.length < 3 || wordCount < 40) {
     const answer = [
-      "El texto todavía es corto para un resumen extractivo.",
+      `**Resumen corto** (${wordCount} palabras)`,
       "",
-      `Tiene ${wordCount} palabras. Pega un apunte, un artículo o varias oraciones y separo las ideas que más se repiten, sin parafrasearlas.`,
+      parts.map((sentence) => `- ${sentence}`).join("\n") || `- ${text}`,
+      "",
+      "Con un texto más largo puedo elegir las oraciones que más cargan el tema.",
     ].join("\n");
-    return { applicable: false, answer, notes: "" };
+    return { applicable: true, answer, notes: `Resumen corto de ${wordCount} palabras.` };
   }
 
   const minutes = Math.max(1, Math.round(wordCount / 200));

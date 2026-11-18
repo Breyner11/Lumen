@@ -1,3 +1,4 @@
+import { isRelevant } from "@/lib/tools/relevance";
 import { lookupWikipedia, searchQuery, type WikiHit } from "@/lib/tools/wiki";
 
 export type SourceHit = {
@@ -29,7 +30,9 @@ export async function gatherSources(question: string): Promise<SourceHit[]> {
   for (const result of settled) {
     if (result.status === "fulfilled") hits.push(...result.value);
   }
-  return dedupe(hits).slice(0, 12);
+  return dedupe(hits)
+    .filter((hit) => isRelevant(question, hit.title, hit.summary))
+    .slice(0, 12);
 }
 
 async function fromWikipedia(question: string): Promise<SourceHit[]> {

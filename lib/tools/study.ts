@@ -2,6 +2,31 @@ import { researchBrief } from "@/lib/tools/research";
 import { summarizeText } from "@/lib/tools/summarize";
 import { STOPWORDS, words } from "@/lib/tools/spanish";
 
+const STUDY_TOPICS: Array<{ match: RegExp; title: string; body: string }> = [
+  {
+    match: /fotos[ií]ntesis/,
+    title: "Fotosíntesis",
+    body: [
+      "Las plantas convierten **luz, agua y CO₂** en azúcares y liberan oxígeno.",
+      "",
+      "1. La clorofila captura luz en las hojas.",
+      "2. El agua llega por la raíz; el CO₂, por los estomas.",
+      "3. Se forma glucosa (alimento) y se suelta O₂.",
+      "",
+      "Sin luz, el proceso se detiene o baja mucho: por eso una planta en un closet se debilita.",
+    ].join("\n"),
+  },
+  {
+    match: /fracci[oó]n(?:es)?\s+equivalente|equivalente(?:s)?\s+frac/,
+    title: "Fracciones equivalentes",
+    body: [
+      "Dos fracciones son equivalentes si representan **la misma cantidad**, aunque se escriban distinto (1/2 = 2/4 = 3/6).",
+      "",
+      "Se obtienen multiplicando o dividiendo numerador y denominador por el mismo número distinto de cero.",
+    ].join("\n"),
+  },
+];
+
 export async function studySession(input: string): Promise<{
   applicable: boolean;
   answer: string;
@@ -16,6 +41,7 @@ export async function studySession(input: string): Promise<{
       notes: "",
     };
   }
+
   if (words(text).length >= 80) {
     const summary = summarizeText(text);
     const terms = topTerms(text, 4);
@@ -40,7 +66,74 @@ export async function studySession(input: string): Promise<{
     };
   }
 
-  // Short questions get a real explanation first (same engine as Investigar).
+  const lower = text.toLowerCase();
+  const known = STUDY_TOPICS.find((item) => item.match.test(lower));
+  if (known) {
+    return {
+      applicable: true,
+      answer: [
+        `**${known.title}**`,
+        "",
+        known.body,
+        "",
+        studyPlan(known.title),
+      ].join("\n"),
+      notes: `Explicación de estudio: ${known.title}`,
+    };
+  }
+
+  // How to study X → concrete plan, optionally with a short explanation.
+  if (/c[oó]mo\s+estudiar|plan\s+de\s+estudio|tengo\s+examen|repasar|para\s+(?:el\s+)?examen/.test(lower)) {
+    const topic =
+      text
+        .replace(/^.*?(?:sobre|de|del|en)\s+/i, "")
+        .replace(/[?¿!.]+$/g, "")
+        .trim() || text;
+    const researched = await researchBrief(topic);
+    const lead = researched.applicable
+      ? researched.answer.split("\n").slice(0, 12).join("\n")
+      : `Tema: **${topic}**.`;
+    return {
+      applicable: true,
+      answer: [
+        lead,
+        "",
+        "**Plan para estudiar (hoy)**",
+        "",
+        "1. 10 min: escribe lo que ya crees saber, sin mirar apuntes.",
+        "2. 25 min: lee o mira una explicación y marca 5 ideas clave.",
+        "3. 15 min: hazte 5 preguntas y respóndelas en voz alta.",
+        "4. 5 min: anota lo que todavía no podrías explicar.",
+        "",
+        "Si el examen es mañana, prioriza las 5 ideas y un ejemplo por idea; no intentes releer todo.",
+      ].join("\n"),
+      notes: researched.notes || `Plan de estudio para «${topic}».`,
+    };
+  }
+
+  // Absurd / clearly fictional topics: answer honestly without forcing bad wiki hits.
+  if (isPlayfulOrAbsurd(lower)) {
+    return {
+      applicable: true,
+      answer: [
+        `**Tema:** ${text}`,
+        "",
+        "Eso suena a mezcla creativa, no a un concepto de clase. Aun así se puede estudiar el truco:",
+        "",
+        "1. Separa lo real de lo inventado (por ejemplo, «matemáticas» sí; «unicornio rosa que vuela» no como especie).",
+        "2. Escoge la parte útil (definir, comparar, inventar un problema).",
+        "3. Cierra con una pregunta que sí se pueda calificar.",
+        "",
+        "**Ejemplo de ficha**",
+        "",
+        `- Invento: ${clip(text, 80)}`,
+        "- Parte seria que sí estudiarías: ________________",
+        "- Pregunta de examen posible: ________________",
+      ].join("\n"),
+      notes: "Tema creativo/absurdo: plan de estudio sin fuentes forzadas.",
+    };
+  }
+
   if (
     words(text).length < 40 &&
     /^(expl[ií]came|qu[eé]\s+es|qu[eé]\s+significa|c[oó]mo\s+funciona|habla(?:me)?\s+de|por\s+qu[eé]|diferencia)/i.test(
@@ -49,48 +142,53 @@ export async function studySession(input: string): Promise<{
   ) {
     const researched = await researchBrief(text);
     if (researched.applicable) {
-      const answer = [
-        researched.answer,
-        "",
-        "**Para estudiarlo**",
-        "",
-        "1. Reescribe la idea central en una sola oración sin mirar.",
-        "2. Da un ejemplo propio.",
-        "3. Di con qué se confunde este tema.",
-      ].join("\n");
-      return { applicable: true, answer, notes: researched.notes };
+      return {
+        applicable: true,
+        answer: [researched.answer, "", studyPlan(clip(text, 60))].join("\n"),
+        notes: researched.notes,
+      };
     }
   }
 
-  const topic = text.replace(/\s+/g, " ");
-  const researched = await researchBrief(topic);
+  const researched = await researchBrief(text);
   if (researched.applicable) {
-    const answer = [
-      researched.answer,
-      "",
-      "**Plan de 25 minutos**",
-      "",
-      "1. Subraya la idea central.",
-      "2. Inventa un ejemplo y un contraejemplo.",
-      "3. Explícaselo a alguien en cinco oraciones.",
-    ].join("\n");
-    return { applicable: true, answer, notes: researched.notes };
+    return {
+      applicable: true,
+      answer: [researched.answer, "", studyPlan(clip(text, 60))].join("\n"),
+      notes: researched.notes,
+    };
   }
 
-  const answer = [
-    `**Sesión sobre:** ${topic}`,
+  const topic = text.replace(/\s+/g, " ");
+  return {
+    applicable: true,
+    answer: [
+      `**Sesión sobre:** ${topic}`,
+      "",
+      "1. Escribe con tus palabras qué crees que significa.",
+      "2. Busca un ejemplo y un caso donde no se cumpla.",
+      "3. Explícaselo a alguien en cinco oraciones.",
+      "",
+      studyPlan(topic),
+    ].join("\n"),
+    notes: "",
+  };
+}
+
+function studyPlan(topic: string): string {
+  return [
+    "**Para fijarlo**",
     "",
-    "1. Escribe con tus palabras qué crees que significa.",
-    "2. Busca un ejemplo y un caso donde no se cumpla.",
-    "3. Ciérralo explicándoselo a alguien que no vio la clase.",
-    "",
-    "**Preguntas**",
-    "",
-    `- ¿Qué problema resuelve «${clip(topic)}»?`,
-    "- ¿Con qué se confunde?",
-    "- ¿Qué dato tendrías que recordar en un examen?",
+    `- Reescribe «${clip(topic, 70)}» en una oración.`,
+    "- Da un ejemplo propio y un contraejemplo.",
+    "- Di con qué se confunde este tema.",
   ].join("\n");
-  return { applicable: false, answer, notes: "" };
+}
+
+function isPlayfulOrAbsurd(lower: string): boolean {
+  return /unicornio|drag[oó]n|pl[aá]tano\s+que|gato\s+robot|vuela\s+con|rosa\s+que|marciano|pizza\s+hablante|absurdo/.test(
+    lower,
+  );
 }
 
 function topTerms(text: string, count: number): string[] {
@@ -105,6 +203,6 @@ function topTerms(text: string, count: number): string[] {
     .map(([word]) => word);
 }
 
-function clip(text: string): string {
-  return text.length > 80 ? `${text.slice(0, 77)}…` : text;
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }

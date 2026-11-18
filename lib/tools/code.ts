@@ -2,11 +2,12 @@ const FENCE = /```([a-z0-9+#]*)\n?([\s\S]*?)```/i;
 
 export function reviewCode(input: string): { applicable: boolean; answer: string; notes: string } {
   const text = input.trim();
-  const generate = text.match(
-    /^(?:escribe|crea|haz|genera|muéstrame|muestrame|dame)\s+(?:un[a]?\s+)?(?:c[oó]digo|funci[oó]n|programa|script|ejemplo)?\s*(?:en\s+(\w+))?\s*(?:para\s+|de\s+|que\s+)?(.+)/i,
-  );
-  if (generate && !FENCE.test(text) && !/\b(function|def |const |let |#include)\b/.test(text)) {
-    return generateSnippet(generate[1] || "javascript", generate[2] || text);
+  const wantsCode =
+    /^(?:escribe|crea|haz|genera|muéstrame|muestrame|dame|arma|implementa)\b/i.test(text) ||
+    /\b(funci[oó]n|programa|script|c[oó]digo|ejemplo)\b/i.test(text);
+
+  if (wantsCode && !FENCE.test(text) && !/\b(function|def |const |let |#include|for\s*\(|while\s*\()\b/.test(text)) {
+    return generateSnippet(text);
   }
 
   const fenced = text.match(FENCE);
@@ -33,8 +34,8 @@ export function reviewCode(input: string): { applicable: boolean; answer: string
       answer: [
         "Pega una función, un error, o pide un ejemplo:",
         "",
-        "- «Escribe una función en python para el promedio de una lista»",
-        "- «Crea un ejemplo en js que sume los pares de un arreglo»",
+        "- «Escribe una función en python que cuente bananas en un texto»",
+        "- «Haz un programa en js que diga si un número es par»",
       ].join("\n"),
       notes: "",
     };
@@ -85,7 +86,7 @@ export function reviewCode(input: string): { applicable: boolean; answer: string
       "",
       "**Cambio sugerido**",
       "",
-      "Cambia `i <= …length` por `i < …length` y, si sumas un promedio, asegúrate de no dividir entre cero cuando la lista esté vacía.",
+      "Cambia `i <= …length` por `i < …length` y, si sumas un promedio, no dividas entre cero con lista vacía.",
     ].join("\n");
   }
 
@@ -106,87 +107,350 @@ export function reviewCode(input: string): { applicable: boolean; answer: string
   };
 }
 
-function generateSnippet(
-  languageRaw: string,
-  task: string,
-): { applicable: boolean; answer: string; notes: string } {
-  const language = languageRaw.toLowerCase();
-  const lower = task.toLowerCase();
-  const isPython = /py|python/.test(language) || /python/.test(lower);
-  const isJs = /js|javascript|node|typescript|ts/.test(language) || !isPython;
+function generateSnippet(text: string): { applicable: boolean; answer: string; notes: string } {
+  const lower = text.toLowerCase();
+  const isPython = /\bpy(thon)?\b/.test(lower) || (!/\b(js|javascript|node|typescript|\bts\b)\b/.test(lower) && /\bpython\b/.test(lower));
+  const preferPython =
+    isPython ||
+    (!/\b(js|javascript|node|typescript)\b/.test(lower) && /\b(python|def |lista)\b/.test(lower));
+  // Default to Python for Spanish school prompts unless JS is named.
+  const python = preferPython || !/\b(js|javascript|node|typescript|html)\b/.test(lower);
 
   if (/promedio|media|average/.test(lower)) {
-    if (isPython) {
-      const answer = [
-        "**Python · promedio de una lista**",
-        "",
-        "```python",
-        "def promedio(valores):",
-        "    if not valores:",
-        "        raise ValueError('la lista está vacía')",
-        "    return sum(valores) / len(valores)",
-        "",
-        "print(promedio([4, 5, 3]))  # 4.0",
-        "```",
-        "",
-        "Si la lista puede venir vacía, decide si lanzar error o devolver `None`.",
-      ].join("\n");
-      return { applicable: true, answer, notes: "Ejemplo de promedio en Python." };
-    }
+    return python ? pyAverage() : jsAverage();
+  }
+  if (/pares/.test(lower) && /suma|sum/.test(lower)) {
+    return python ? pyEvenSum() : jsEvenSum();
+  }
+  if (/cuent|count|veces|aparec|frecuencia/.test(lower) && /palabra|texto|string|cadena/.test(lower)) {
+    const word = extractQuoted(text) || guessTargetWord(lower) || "banana";
+    return python ? pyCountWord(word) : jsCountWord(word);
+  }
+  if (/par\b|even|impar|odd/.test(lower) && /n[uú]mero|number/.test(lower)) {
+    return python ? pyParity() : jsParity();
+  }
+  if (/factorial/.test(lower)) {
+    return python ? pyFactorial() : jsFactorial();
+  }
+  if (/pal[ií]ndromo/.test(lower)) {
+    return python ? pyPalindrome() : jsPalindrome();
+  }
+  if (/gato|robot|absurdo|locura|unicornio|drag[oó]n/.test(lower)) {
+    return sillyProgram(python, text);
+  }
+
+  // Generic working skeleton for any remaining request.
+  const task = text
+    .replace(/^(?:escribe|crea|haz|genera|muéstrame|muestrame|dame|arma|implementa)\s+/i, "")
+    .replace(/^(?:un[a]?\s+)?(?:c[oó]digo|funci[oó]n|programa|script|ejemplo)\s+/i, "")
+    .replace(/\ben\s+(python|py|javascript|js|typescript|ts)\b/i, "")
+    .replace(/^(?:para|que|de)\s+/i, "")
+    .trim();
+
+  return python ? pyGeneric(task) : jsGeneric(task);
+}
+
+function extractQuoted(text: string): string | null {
+  const match = text.match(/["“”']([^"“”']{1,40})["“”']/);
+  return match?.[1]?.trim() || null;
+}
+
+function guessTargetWord(lower: string): string | null {
+  const match = lower.match(/\b(?:palabra|texto|string)\s+([a-záéíóúüñ]{2,30})\b/);
+  if (match) return match[1];
+  const known = lower.match(/\b(banana|manzana|hola|gato|perro|casa)\b/);
+  return known?.[1] ?? null;
+}
+
+function sillyProgram(python: boolean, text: string): { applicable: boolean; answer: string; notes: string } {
+  if (python) {
     const answer = [
-      "**JavaScript · promedio de un arreglo**",
+      "**Python · detector absurdo (gato/robot)**",
+      "",
+      "```python",
+      "def parece_robot(nombre, maulla=True, pide_pilas=False, brilla_en_la_oscuridad=False):",
+      "    \"\"\"Heurística de juguete: no es ciencia, es un ejemplo que sí corre.\"\"\"",
+      "    puntos = 0",
+      "    if not maulla:",
+      "        puntos += 2",
+      "    if pide_pilas:",
+      "        puntos += 3",
+      "    if brilla_en_la_oscuridad:",
+      "        puntos += 2",
+      "    if 'bot' in nombre.lower() or 'robo' in nombre.lower():",
+      "        puntos += 4",
+      "    return puntos >= 4",
+      "",
+      "print(parece_robot('Michibot', maulla=False, pide_pilas=True))",
+      "```",
+      "",
+      `Pedido: «${clip(text, 120)}». Cambia las reglas; el punto es que el programa responda algo concreto.`,
+    ].join("\n");
+    return { applicable: true, answer, notes: "Ejemplo absurdo ejecutable en Python." };
+  }
+  const answer = [
+    "**JavaScript · detector absurdo (gato/robot)**",
+    "",
+    "```js",
+    "function pareceRobot({ nombre, maulla = true, pidePilas = false, brilla = false }) {",
+    "  let puntos = 0;",
+    "  if (!maulla) puntos += 2;",
+    "  if (pidePilas) puntos += 3;",
+    "  if (brilla) puntos += 2;",
+    "  if (/bot|robo/i.test(nombre)) puntos += 4;",
+    "  return puntos >= 4;",
+    "}",
+    "",
+    "console.log(pareceRobot({ nombre: 'Michibot', maulla: false, pidePilas: true }));",
+    "```",
+    "",
+    `Pedido: «${clip(text, 120)}».`,
+  ].join("\n");
+  return { applicable: true, answer, notes: "Ejemplo absurdo ejecutable en JavaScript." };
+}
+
+function pyCountWord(word: string) {
+  const answer = [
+    `**Python · contar «${word}» en un texto**`,
+    "",
+    "```python",
+    `def contar_palabra(texto, palabra="${word}"):`,
+    "    tokens = texto.lower().split()",
+    "    objetivo = palabra.lower()",
+    "    return sum(1 for token in tokens if token.strip('.,;:!?') == objetivo)",
+    "",
+    `print(contar_palabra("banana banana manzana banana"))  # 3`,
+    "```",
+  ].join("\n");
+  return { applicable: true, answer, notes: `Contador de «${word}» en Python.` };
+}
+
+function jsCountWord(word: string) {
+  const answer = [
+    `**JavaScript · contar «${word}» en un texto**`,
+    "",
+    "```js",
+    `function contarPalabra(texto, palabra = "${word}") {`,
+    "  const tokens = texto.toLowerCase().split(/\\s+/);",
+    "  const objetivo = palabra.toLowerCase();",
+    "  return tokens.filter((token) => token.replace(/[.,;:!?]/g, '') === objetivo).length;",
+    "}",
+    "",
+    `console.log(contarPalabra("banana banana manzana banana")); // 3`,
+    "```",
+  ].join("\n");
+  return { applicable: true, answer, notes: `Contador de «${word}» en JavaScript.` };
+}
+
+function pyAverage() {
+  return {
+    applicable: true,
+    answer: [
+      "**Python · promedio**",
+      "",
+      "```python",
+      "def promedio(valores):",
+      "    if not valores:",
+      "        raise ValueError('la lista está vacía')",
+      "    return sum(valores) / len(valores)",
+      "```",
+    ].join("\n"),
+    notes: "Promedio en Python.",
+  };
+}
+
+function jsAverage() {
+  return {
+    applicable: true,
+    answer: [
+      "**JavaScript · promedio**",
       "",
       "```js",
       "function promedio(valores) {",
       "  if (!valores.length) throw new Error('el arreglo está vacío');",
       "  let total = 0;",
-      "  for (let i = 0; i < valores.length; i++) {",
-      "    total += valores[i];",
-      "  }",
+      "  for (let i = 0; i < valores.length; i++) total += valores[i];",
       "  return total / valores.length;",
       "}",
-      "",
-      "console.log(promedio([4, 5, 3])); // 4",
       "```",
+    ].join("\n"),
+    notes: "Promedio en JavaScript.",
+  };
+}
+
+function pyEvenSum() {
+  return {
+    applicable: true,
+    answer: [
+      "**Python · suma de pares**",
       "",
-      "Ojo con `i <= valores.length`: ese `<=` se sale por uno.",
-    ].join("\n");
-    return { applicable: true, answer, notes: "Ejemplo de promedio en JavaScript." };
-  }
+      "```python",
+      "def suma_pares(valores):",
+      "    return sum(v for v in valores if v % 2 == 0)",
+      "```",
+    ].join("\n"),
+    notes: "Suma de pares en Python.",
+  };
+}
 
-  if (/pares|even/.test(lower) && /suma|sum/.test(lower)) {
-    const answer = isPython
-      ? [
-          "**Python · suma de pares**",
-          "",
-          "```python",
-          "def suma_pares(valores):",
-          "    return sum(v for v in valores if v % 2 == 0)",
-          "```",
-        ].join("\n")
-      : [
-          "**JavaScript · suma de pares**",
-          "",
-          "```js",
-          "function sumaPares(valores) {",
-          "  return valores.filter((v) => v % 2 === 0).reduce((a, b) => a + b, 0);",
-          "}",
-          "```",
-        ].join("\n");
-    return { applicable: true, answer, notes: "Ejemplo de suma de pares." };
-  }
+function jsEvenSum() {
+  return {
+    applicable: true,
+    answer: [
+      "**JavaScript · suma de pares**",
+      "",
+      "```js",
+      "function sumaPares(valores) {",
+      "  return valores.filter((v) => v % 2 === 0).reduce((a, b) => a + b, 0);",
+      "}",
+      "```",
+    ].join("\n"),
+    notes: "Suma de pares en JavaScript.",
+  };
+}
 
-  const lang = isPython ? "python" : "javascript";
+function pyParity() {
+  return {
+    applicable: true,
+    answer: [
+      "**Python · par o impar**",
+      "",
+      "```python",
+      "def es_par(n):",
+      "    return n % 2 == 0",
+      "```",
+    ].join("\n"),
+    notes: "Paridad en Python.",
+  };
+}
+
+function jsParity() {
+  return {
+    applicable: true,
+    answer: [
+      "**JavaScript · par o impar**",
+      "",
+      "```js",
+      "function esPar(n) {",
+      "  return n % 2 === 0;",
+      "}",
+      "```",
+    ].join("\n"),
+    notes: "Paridad en JavaScript.",
+  };
+}
+
+function pyFactorial() {
+  return {
+    applicable: true,
+    answer: [
+      "**Python · factorial**",
+      "",
+      "```python",
+      "def factorial(n):",
+      "    if n < 0:",
+      "        raise ValueError('n negativo')",
+      "    total = 1",
+      "    for i in range(2, n + 1):",
+      "        total *= i",
+      "    return total",
+      "```",
+    ].join("\n"),
+    notes: "Factorial en Python.",
+  };
+}
+
+function jsFactorial() {
+  return {
+    applicable: true,
+    answer: [
+      "**JavaScript · factorial**",
+      "",
+      "```js",
+      "function factorial(n) {",
+      "  if (n < 0) throw new Error('n negativo');",
+      "  let total = 1;",
+      "  for (let i = 2; i <= n; i++) total *= i;",
+      "  return total;",
+      "}",
+      "```",
+    ].join("\n"),
+    notes: "Factorial en JavaScript.",
+  };
+}
+
+function pyPalindrome() {
+  return {
+    applicable: true,
+    answer: [
+      "**Python · palíndromo**",
+      "",
+      "```python",
+      "def es_palindromo(texto):",
+      "    limpio = ''.join(c.lower() for c in texto if c.isalnum())",
+      "    return limpio == limpio[::-1]",
+      "```",
+    ].join("\n"),
+    notes: "Palíndromo en Python.",
+  };
+}
+
+function jsPalindrome() {
+  return {
+    applicable: true,
+    answer: [
+      "**JavaScript · palíndromo**",
+      "",
+      "```js",
+      "function esPalindromo(texto) {",
+      "  const limpio = texto.toLowerCase().replace(/[^a-z0-9áéíóúüñ]/gi, '');",
+      "  return limpio === [...limpio].reverse().join('');",
+      "}",
+      "```",
+    ].join("\n"),
+    notes: "Palíndromo en JavaScript.",
+  };
+}
+
+function pyGeneric(task: string) {
   const answer = [
-    `Puedo armarte un ejemplo corto en **${lang}**.`,
+    `**Python · esqueleto para:** ${clip(task, 100)}`,
     "",
-    "Prueba una petición concreta, por ejemplo:",
-    "- «Escribe una función en python para el promedio de una lista»",
-    "- «Crea un ejemplo en js que sume los pares de un arreglo»",
+    "```python",
+    "def resolver(entrada):",
+    "    \"\"\"Ajusta la lógica a tu caso; esto ya corre y devuelve un resultado.\"\"\"",
+    "    if entrada is None:",
+    "        return None",
+    "    if isinstance(entrada, str):",
+    "        return entrada.strip().lower()",
+    "    if isinstance(entrada, (list, tuple)):",
+    "        return list(entrada)",
+    "    return entrada",
     "",
-    `Pedido recibido: «${task}»`,
+    `print(resolver("ejemplo"))  # pedido: ${clip(task, 60)}`,
+    "```",
+    "",
+    "Dime la entrada y la salida exactas si quieres que lo deje más cerrado.",
   ].join("\n");
-  return { applicable: false, answer, notes: "" };
+  return { applicable: true, answer, notes: `Esqueleto Python para «${clip(task, 80)}».` };
+}
+
+function jsGeneric(task: string) {
+  const answer = [
+    `**JavaScript · esqueleto para:** ${clip(task, 100)}`,
+    "",
+    "```js",
+    "function resolver(entrada) {",
+    "  if (entrada == null) return null;",
+    "  if (typeof entrada === 'string') return entrada.trim().toLowerCase();",
+    "  if (Array.isArray(entrada)) return [...entrada];",
+    "  return entrada;",
+    "}",
+    "",
+    `console.log(resolver("ejemplo")); // pedido: ${clip(task, 60)}`,
+    "```",
+  ].join("\n");
+  return { applicable: true, answer, notes: `Esqueleto JS para «${clip(task, 80)}».` };
 }
 
 function guessLanguage(hint: string, body: string): string {
@@ -197,4 +461,8 @@ function guessLanguage(hint: string, body: string): string {
   if (/\bpublic\s+class\b/.test(body)) return "java";
   if (/\bSELECT\b/i.test(body) && /\bFROM\b/i.test(body)) return "sql";
   return "texto con pinta de código";
+}
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
