@@ -1,5 +1,5 @@
 import { connection } from "next/server";
-import { getIdentity } from "../../../cursor/identity";
+import { requireIdentity } from "../../../cursor/identity";
 import { MODEL_LABEL } from "@/lib/activities";
 import { composeConversation } from "@/lib/compose";
 import { parseChatRequest, upstreamBody } from "@/lib/chat-request";
@@ -26,25 +26,22 @@ function sse(payload: unknown): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-function sameOrigin(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  if (!origin) return true;
-  const host = request.headers.get("host");
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
-}
-
 export async function POST(request: Request) {
   await connection();
-  if (!sameOrigin(request)) {
-    return Response.json({ error: "La petición viene de otro sitio." }, { status: 403 });
+  const identity = await requireIdentity(request);
+  if (identity instanceof Response) {
+    return Response.json(
+      { error: "Inicia sesión en Cursor para usar Taller." },
+      { status: 401, headers: { "cache-control": "private, no-store" } },
+    );
   }
-  const identity = await getIdentity(request);
-  const caller = identity.verified ? identity.sub : "anon";
-  if (!allow(caller)) {
+  if (identity.kind !== "person") {
+    return Response.json(
+      { error: "Taller solo admite una sesión de persona." },
+      { status: 403, headers: { "cache-control": "private, no-store" } },
+    );
+  }
+  if (!allow(identity.sub)) {
     return Response.json(
       { error: "Demasiadas peticiones. Espera un minuto y vuelve a intentar." },
       { status: 429, headers: { "cache-control": "private, no-store" } },
@@ -66,8 +63,7 @@ export async function POST(request: Request) {
     return Response.json({ error: parsed.error }, { status: 400 });
   }
 
-  const modelReady =
-    identity.verified && identity.kind === "person" && Boolean(process.env.DEEPSEEK_API_KEY);
+  const modelReady = Boolean(process.env.DEEPSEEK_API_KEY);
   const stream = modelReady ? modelStream(parsed, request.signal) : tallerStream(parsed);
   return new Response(stream, {
     headers: {

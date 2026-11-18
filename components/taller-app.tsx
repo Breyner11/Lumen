@@ -95,8 +95,14 @@ export function TallerApp() {
     }
     setReady(true);
     void fetch("/api/status")
-      .then((response) => response.json())
-      .then((body: { modelReady?: boolean }) => setStatus(body.modelReady ? "model" : "taller"))
+      .then(async (response) => {
+        if (!response.ok) {
+          setStatus("taller");
+          return;
+        }
+        const body = (await response.json()) as { modelReady?: boolean };
+        setStatus(body.modelReady ? "model" : "taller");
+      })
       .catch(() => setStatus("taller"));
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */

@@ -1,13 +1,23 @@
 import { connection } from "next/server";
-import { getIdentity } from "../../../cursor/identity";
+import { requireIdentity } from "../../../cursor/identity";
 
 export async function GET(request: Request) {
   await connection();
-  const identity = await getIdentity(request);
-  const modelReady =
-    identity.verified && identity.kind === "person" && Boolean(process.env.DEEPSEEK_API_KEY);
+  const identity = await requireIdentity(request);
+  if (identity instanceof Response) {
+    return Response.json(
+      { modelReady: false, error: "unauthorized" },
+      { status: 401, headers: { "cache-control": "private, no-store" } },
+    );
+  }
+  if (identity.kind !== "person") {
+    return Response.json(
+      { modelReady: false, error: "forbidden" },
+      { status: 403, headers: { "cache-control": "private, no-store" } },
+    );
+  }
   return Response.json(
-    { modelReady },
+    { modelReady: Boolean(process.env.DEEPSEEK_API_KEY) },
     { headers: { "cache-control": "private, no-store" } },
   );
 }
