@@ -14,23 +14,41 @@ Si una respuesta falla, marca **Mal** y escribe la correcta, o envía «está ma
 
 ## Arquitectura RAG
 
+| Componente | Herramienta | Función |
+|---|---|---|
+| Lenguaje | **Python** (`services/rag-engine`) | Ecosistema para IA y datos; motor FastAPI aparte de la UI Next.js |
+| Conexión a Internet | **DuckDuckGo Search** (gratis; Tavily opcional luego) | Busca en la web en tiempo real sin un crawler propio |
+| Base de datos | **SQLite** en disco (`services/rag-engine/data/taller-rag.sqlite`) | Persiste documentos, chunks, embeddings y lecciones |
+| Comprensión de texto | **Ollama + `nomic-embed-text`** (fallback TF-IDF) | Embeddings locales sin pagar nube; si Ollama no corre, usa TF-IDF |
+
 ```
-Documentos / lecciones / fuentes en vivo
+Documentos / lecciones / DuckDuckGo + bases académicas
         │
         ▼
-   Chunking (ventanas solapadas)
-        │
-        ▼
-   Índice TF-IDF disperso
+   Chunking → embeddings (Ollama o TF-IDF) → SQLite
         │
         ▼
    Retrieve top-k (similitud coseno)
         │
         ▼
-   Augment → respuesta / prompt DeepSeek
+   Augment → respuesta Taller / prompt DeepSeek
 ```
 
-En **Conocimiento RAG** pegas apuntes; Investigar además indexa Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC y Open Library al vuelo.
+### Modo autónomo en tu PC
+
+```sh
+# 1) (opcional) embeddings locales
+ollama pull nomic-embed-text
+
+# 2) motor Python
+npm run rag:install
+npm run rag:engine
+
+# 3) app
+npm run dev
+```
+
+Si el motor Python no está arriba, la app sigue con el RAG TypeScript + DuckDuckGo HTML y las bases verificables.
 
 ## Uso local
 

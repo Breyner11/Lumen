@@ -110,6 +110,17 @@ test("RAG recupera fragmentos de un documento indexado", async () => {
   assert.match(hits[0]!.chunk.text, /Frenar|ruedas|cadena/i);
 });
 
+test("motor Python RAG responde health si está arriba", async () => {
+  const { engineHealth } = await import("../lib/rag/engine-client");
+  const health = await engineHealth();
+  if (!health) {
+    assert.equal(health, null);
+    return;
+  }
+  assert.equal(health.ok, true);
+  assert.match(String(health.search || "duckduckgo"), /duckduckgo/i);
+});
+
 test("traducir pasa inglés a español", async () => {
   const result = await runActivity("traducir", "Hello world. The course starts on Monday.");
   assert.equal(result.applicable, true);

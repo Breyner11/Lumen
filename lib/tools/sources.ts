@@ -1,4 +1,5 @@
 import { isRelevant } from "@/lib/tools/relevance";
+import { searchWeb } from "@/lib/tools/websearch";
 import { lookupWikipedia, searchQuery, type WikiHit } from "@/lib/tools/wiki";
 
 export type SourceHit = {
@@ -6,7 +7,7 @@ export type SourceHit = {
   title: string;
   summary: string;
   url: string;
-  kind: "encyclopedia" | "structured" | "paper" | "book";
+  kind: "encyclopedia" | "structured" | "paper" | "book" | "web";
   year?: number;
 };
 
@@ -20,6 +21,7 @@ export async function gatherSources(question: string): Promise<SourceHit[]> {
   const settled = await Promise.allSettled([
     fromWikipedia(question),
     fromWikidata(query),
+    fromDuckDuckGo(query),
     fromOpenAlex(query),
     fromCrossref(query),
     fromEuropePmc(query),
@@ -31,8 +33,21 @@ export async function gatherSources(question: string): Promise<SourceHit[]> {
     if (result.status === "fulfilled") hits.push(...result.value);
   }
   return dedupe(hits)
-    .filter((hit) => isRelevant(question, hit.title, hit.summary))
-    .slice(0, 12);
+    .filter((hit) => isRelevant(question, hit.title, hit.summary) || hit.kind === "web")
+    .slice(0, 14);
+}
+
+async function fromDuckDuckGo(query: string): Promise<SourceHit[]> {
+  const results = await searchWeb(query, 5);
+  return results
+    .filter((item) => item.title && (item.snippet || item.url))
+    .map((item) => ({
+      source: "DuckDuckGo",
+      title: item.title,
+      summary: item.snippet || item.title,
+      url: item.url || "https://duckduckgo.com/",
+      kind: "web" as const,
+    }));
 }
 
 async function fromWikipedia(question: string): Promise<SourceHit[]> {
@@ -405,8 +420,8 @@ function dedupe(hits: SourceHit[]): SourceHit[] {
     seen.add(key);
     out.push(hit);
   }
-  // Prefer encyclopedia/structured first, then papers, then books.
-  const rank = { encyclopedia: 0, structured: 1, paper: 2, book: 3 };
+  // Prefer encyclopedia/structured first, then web, papers, books.
+  const rank = { encyclopedia: 0, structured: 1, web: 2, paper: 3, book: 4 };
   return out.sort((a, b) => rank[a.kind] - rank[b.kind]);
 }
 

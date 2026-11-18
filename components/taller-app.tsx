@@ -65,6 +65,12 @@ const ICONS = {
 
 type Threads = Partial<Record<ActivityId, StoredMessage[]>>;
 type Status = "loading" | "taller" | "model";
+type RagStatus = {
+  engine: boolean;
+  ollama: boolean;
+  embedModel: string;
+  search: string;
+};
 
 export function TallerApp() {
   const [activity, setActivity] = useState<ActivityId>("estudiar");
@@ -80,6 +86,7 @@ export function TallerApp() {
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState<Status>("loading");
+  const [ragStatus, setRagStatus] = useState<RagStatus | null>(null);
   const [activitiesOpen, setActivitiesOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -126,6 +133,13 @@ export function TallerApp() {
         setStatus(body.modelReady ? "model" : "taller");
       })
       .catch(() => setStatus("taller"));
+    void fetch("/api/rag/status")
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = (await response.json()) as RagStatus;
+        setRagStatus(body);
+      })
+      .catch(() => setRagStatus(null));
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -477,8 +491,10 @@ export function TallerApp() {
 
         {status === "taller" && (
           <p className="mx-3 mt-2 rounded-xl bg-accent/70 px-3 py-2 text-sm text-accent-foreground md:mx-0 md:mr-3">
-            Modo taller: cada oficio responde aquí. Si se equivoca, marca Mal o escribe «está mal, la respuesta es…» y aprende solo.
-            {lessons.length > 0 ? ` Lleva ${lessons.length} corrección${lessons.length === 1 ? "" : "es"} guardada${lessons.length === 1 ? "" : "s"}.` : ""}
+            Modo taller + RAG: DuckDuckGo, documentos indexados
+            {ragStatus?.engine ? " y motor Python/SQLite" : ""}
+            {ragStatus?.ollama ? " con Ollama" : ""}. Si se equivoca, marca Mal o escribe «está mal, la respuesta es…».
+            {lessons.length > 0 ? ` Lleva ${lessons.length} corrección${lessons.length === 1 ? "" : "es"}.` : ""}
           </p>
         )}
         {learnNote && (
