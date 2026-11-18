@@ -20,7 +20,28 @@ function tokenize(source: string): string[] {
     if (!/^\s+$/.test(match[0])) tokens.push(match[0]);
   }
   if (cursor !== source.length) throw new ParseError("No reconozco una parte de la cuenta.");
-  return tokens;
+  return insertImplicitMultiplication(tokens);
+}
+
+/** Turns `2sqrt(9)`, `2(3)` or `)( ` into multiplications. */
+function insertImplicitMultiplication(tokens: string[]): string[] {
+  const out: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const current = tokens[index]!;
+    const previous = out[out.length - 1];
+    if (previous && needsImplicitMultiply(previous, current)) out.push("*");
+    out.push(current);
+  }
+  return out;
+}
+
+function needsImplicitMultiply(left: string, right: string): boolean {
+  // sqrt/raiz are prefix operators; never invent a * after them.
+  if (/^raiz|^sqrt|^√/i.test(left)) return false;
+  const leftEndsValue = /^[0-9]/.test(left) || left === ")";
+  const rightStartsValue =
+    /^[0-9]/.test(right) || right === "(" || /^raiz|^sqrt|^√/i.test(right);
+  return leftEndsValue && rightStartsValue;
 }
 
 function parseExpression(source: string): number {
@@ -181,7 +202,26 @@ function normalizeExpression(source: string): string {
     .replace(/÷/g, "/")
     .replace(/√/g, "sqrt")
     .replace(/ra[ií]z(?:\s+cuadrada)?(?:\s+de)?/gi, "sqrt")
+    .replace(/(\d)\s*(sqrt)/gi, "$1*$2")
+    .replace(/(sqrt)\s*\(/gi, "sqrt(")
     .trim();
+}
+
+function looksLikeExpression(source: string): boolean {
+  const compact = source.replace(/\s+/g, "");
+  if (!/\d/.test(compact)) return false;
+  if (!/^[0-9+\-*/^().,sqrt×÷√]+$/i.test(compact)) return false;
+  return /[+\-*/^×÷]|sqrt|√/i.test(compact);
+}
+
+function formatExpressionAnswer(original: string, value: number): string {
+  return [
+    `**${formatNumber(value)}**`,
+    "",
+    `\`${original}\` = **${formatNumber(value)}**`,
+    "",
+    "Prioridad: potencias y raíces, luego × y ÷, después + y − (de izquierda a derecha).",
+  ].join("\n");
 }
 
 export function solveMath(input: string): { applicable: boolean; answer: string } {
@@ -259,23 +299,32 @@ export function solveMath(input: string): { applicable: boolean; answer: string 
   );
   if (equation) return { applicable: true, answer: equation };
 
-  const wordProblem = solveWordProblem(text);
-  if (wordProblem) return wordProblem;
-
   const stripped = text
     .replace(/^(?:cu[aá]nto es|calcula|calcule|resuelve|cu[aá]l es(?: el resultado de)?)\s+/i, "")
     .replace(/[?¿]/g, "")
     .trim();
   const normalized = normalizeExpression(stripped);
+
+  // Full arithmetic expressions must win over word-helpers like "50+20…".
+  if (looksLikeExpression(normalized)) {
+    try {
+      const value = parseExpression(normalized);
+      return { applicable: true, answer: formatExpressionAnswer(stripped, value) };
+    } catch (error) {
+      const message = error instanceof ParseError ? error.message : "No pude resolver esa cuenta.";
+      return { applicable: false, answer: `${message}\n\n${mathHelp()}` };
+    }
+  }
+
+  const wordProblem = solveWordProblem(text);
+  if (wordProblem) return wordProblem;
+
   if (!/^[\d\s+\-*/^().,a-z]+$/i.test(normalized) || !/\d/.test(normalized)) {
     return { applicable: false, answer: mathHelp() };
   }
   try {
     const value = parseExpression(normalized);
-    return {
-      applicable: true,
-      answer: [`**${formatNumber(value)}**`, "", `\`${stripped}\` = **${formatNumber(value)}**`].join("\n"),
-    };
+    return { applicable: true, answer: formatExpressionAnswer(stripped, value) };
   } catch (error) {
     const message = error instanceof ParseError ? error.message : "No pude resolver esa cuenta.";
     return { applicable: false, answer: `${message}\n\n${mathHelp()}` };
@@ -400,8 +449,10 @@ function solveWordProblem(text: string): { applicable: boolean; answer: string }
     };
   }
 
-  // Extract a bare arithmetic expression buried in words: "cuanto da 12 por 8"
-  const product = lower.match(/(-?\d+(?:[.,]\d+)?)\s*(?:por|×|x)\s*(-?\d+(?:[.,]\d+)?)/i);
+  // Only when the whole phrase is a simple product/sum in words — never a longer formula.
+  const product = lower.match(
+    /^(?:cu[aá]nto\s+(?:es|da)\s+)?(-?\d+(?:[.,]\d+)?)\s*(?:por|×)\s*(-?\d+(?:[.,]\d+)?)\s*$/i,
+  );
   if (product && !/%/.test(lower)) {
     const a = Number(product[1].replace(",", "."));
     const b = Number(product[2].replace(",", "."));
@@ -410,7 +461,9 @@ function solveWordProblem(text: string): { applicable: boolean; answer: string }
       answer: `**${formatNumber(a * b)}**\n\n${formatNumber(a)} × ${formatNumber(b)} = **${formatNumber(a * b)}**.`,
     };
   }
-  const sum = lower.match(/(-?\d+(?:[.,]\d+)?)\s*(?:mas|más|\+)\s*(-?\d+(?:[.,]\d+)?)/i);
+  const sum = lower.match(
+    /^(?:cu[aá]nto\s+(?:es|da)\s+)?(-?\d+(?:[.,]\d+)?)\s*(?:mas|más|\+)\s*(-?\d+(?:[.,]\d+)?)\s*$/i,
+  );
   if (sum) {
     const a = Number(sum[1].replace(",", "."));
     const b = Number(sum[2].replace(",", "."));

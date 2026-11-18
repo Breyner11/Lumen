@@ -9,6 +9,21 @@ test("15% de 240 es 36", async () => {
   assert.match(result.answer, /\*\*36\*\*/);
 });
 
+test("calcular no se corta en el primer +", async () => {
+  const result = await runActivity("calcular", "50+20-100*125");
+  assert.equal(result.applicable, true);
+  assert.match(result.answer, /\*\*-12\.?430\*\*|\*\*-12430\*\*/);
+  assert.doesNotMatch(result.answer, /^\*\*70\*\*$/m);
+});
+
+test("calcular resuelve expresión con raíz pegada", async () => {
+  const result = await runActivity("calcular", "50+20-100/125*2654raiz2");
+  assert.equal(result.applicable, true);
+  assert.doesNotMatch(result.answer, /\*\*70\*\*/);
+  // 70 - (100/125)*2654*sqrt(2) ≈ -2932.68
+  assert.match(result.answer, /-2\.?932/);
+});
+
 test("ecuación lineal 2x + 5 = 17", async () => {
   const result = await runActivity("calcular", "Resuelve 2x + 5 = 17");
   assert.match(result.answer, /x = 6/);
