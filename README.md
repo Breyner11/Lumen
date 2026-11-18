@@ -8,6 +8,10 @@ Cada oficio responde con una herramienta local. **Investigar** consulta en paral
 
 Con `DEEPSEEK_API_KEY` las respuestas pasan por DeepSeek; sin clave, el modo taller sigue respondiendo con esas herramientas.
 
+## Aprendizaje autónomo
+
+Si una respuesta falla, marca **Mal** y escribe la correcta, o envía «está mal, la respuesta es…». Taller guarda esa corrección en tu navegador y, la próxima vez que hagas la misma pregunta en ese oficio, usa lo aprendido.
+
 ## Uso local
 
 ```sh

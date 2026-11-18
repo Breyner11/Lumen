@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { composeConversation } from "../lib/compose";
 import { parseChatRequest } from "../lib/chat-request";
+import { findLesson, parseCorrectionMessage, upsertLesson } from "../lib/lessons";
 import { runActivity } from "../lib/tools/index";
 
 test("15% de 240 es 36", async () => {
@@ -145,4 +147,30 @@ test("estudiar arma plan para fotosíntesis", async () => {
   );
   assert.equal(result.applicable, true);
   assert.match(result.answer, /Fotosíntesis|clorofila|Plan para estudiar/i);
+});
+
+test("aprende una corrección y la reutiliza", async () => {
+  const lessons = upsertLesson([], {
+    activity: "calcular",
+    question: "50+20-100*125",
+    answer: "**-12430**",
+  });
+  const found = findLesson(lessons, "calcular", "50+20-100*125");
+  assert.ok(found);
+  const composed = await composeConversation({
+    activity: "calcular",
+    model: "flash",
+    effort: "high",
+    thinking: false,
+    messages: [{ role: "user", content: "50+20-100*125" }],
+    lessons,
+  });
+  assert.match(composed.answer, /-12430/);
+  assert.equal(composed.learnedFrom, found!.id);
+});
+
+test("detecta mensajes de corrección", () => {
+  const parsed = parseCorrectionMessage("está mal, la respuesta es -12430");
+  assert.ok(parsed);
+  assert.match(parsed!.answer, /-12430/);
 });

@@ -20,8 +20,15 @@ import {
   Trash2,
 } from "lucide-react";
 import { ACTIVITIES, ACTIVITY_MAP, MODEL_LABEL } from "@/lib/activities";
-import { composeConversation } from "@/lib/compose";
 import { formatHistoryTime, pushHistory, sanitizeHistory, type HistoryEntry } from "@/lib/history";
+import {
+  parseCorrectionMessage,
+  sanitizeLessons,
+  touchLesson,
+  upsertLesson,
+  type Lesson,
+} from "@/lib/lessons";
+import { composeRecipePreview } from "@/lib/recipe-preview";
 import { isSkinId, SKINS, type SkinId } from "@/lib/skins";
 import type { ActivityId, Effort, ModelId, StoredMessage } from "@/lib/types";
 import { MarkdownView } from "@/components/markdown-view";
@@ -63,6 +70,7 @@ export function TallerApp() {
   const [skin, setSkin] = useState<SkinId>("brisa");
   const [threads, setThreads] = useState<Threads>({});
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [lessons, setLessons] = useState<Lesson[]>([]);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
@@ -73,6 +81,9 @@ export function TallerApp() {
   const [skinsOpen, setSkinsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [ready, setReady] = useState(false);
+  const [correctingIndex, setCorrectingIndex] = useState<number | null>(null);
+  const [correctionDraft, setCorrectionDraft] = useState("");
+  const [learnNote, setLearnNote] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const current = ACTIVITY_MAP[activity];
@@ -89,6 +100,7 @@ export function TallerApp() {
       setSkin(stored.skin);
       setThreads(stored.threads);
       setHistory(stored.history);
+      setLessons(stored.lessons);
       document.documentElement.dataset.skin = stored.skin;
     } else {
       document.documentElement.dataset.skin = "brisa";
@@ -116,27 +128,19 @@ export function TallerApp() {
     if (!ready) return;
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ activity, model, effort, thinking, skin, threads, history }),
+      JSON.stringify({ activity, model, effort, thinking, skin, threads, history, lessons }),
     );
-  }, [activity, model, effort, thinking, skin, threads, history, ready]);
+  }, [activity, model, effort, thinking, skin, threads, history, lessons, ready]);
 
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
-  }, [thread, streaming, activity]);
+  }, [thread, streaming, activity, learnNote]);
 
-  const [previewPrompt, setPreviewPrompt] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
+  const previewPrompt = useMemo(() => {
     const historyTurns = thread.map((message) => ({ role: message.role, content: message.content }));
     const pending = draft.trim();
     const messages = pending ? [...historyTurns, { role: "user" as const, content: pending }] : historyTurns;
-    void composeConversation({ activity, model, effort, thinking, messages }).then((composed) => {
-      if (!cancelled) setPreviewPrompt(composed.prompt);
-    });
-    return () => {
-      cancelled = true;
-    };
+    return composeRecipePreview({ activity, model, effort, thinking, messages });
   }, [activity, model, effort, thinking, thread, draft]);
 
   function chooseActivity(next: ActivityId) {
@@ -168,10 +172,84 @@ export function TallerApp() {
     setDraft(entry.query);
   }
 
+  function learnFromCorrection(question: string, answer: string, reason?: string) {
+    const q = question.trim();
+    const a = answer.trim();
+    if (!q || !a) return;
+    setLessons((current) =>
+      upsertLesson(current, {
+        activity,
+        question: q,
+        answer: a,
+        reason: reason ?? "Corrección del usuario",
+      }),
+    );
+    setLearnNote("Guardé la corrección. La próxima vez que preguntes lo mismo, usaré esa respuesta.");
+    window.setTimeout(() => setLearnNote(""), 5000);
+  }
+
+  function markGood(assistantIndex: number) {
+    const list = threads[activity] ?? [];
+    const assistant = list[assistantIndex];
+    const question = [...list.slice(0, assistantIndex)].reverse().find((message) => message.role === "user");
+    if (!assistant || assistant.role !== "assistant" || !question) return;
+    learnFromCorrection(question.content, assistant.content, "Confirmado como correcto");
+  }
+
+  function submitCorrection(assistantIndex: number) {
+    const list = threads[activity] ?? [];
+    const question = [...list.slice(0, assistantIndex)].reverse().find((message) => message.role === "user");
+    const answer = correctionDraft.trim();
+    if (!question || !answer) return;
+    learnFromCorrection(question.content, answer, "Corregido con Mal");
+    setThreads((currentThreads) => {
+      const current = currentThreads[activity] ?? [];
+      const next = [...current];
+      if (next[assistantIndex]?.role === "assistant") {
+        next[assistantIndex] = {
+          ...next[assistantIndex]!,
+          content: `${answer}\n\n_Aprendí esta corrección. Gracias._`,
+        };
+      }
+      return { ...currentThreads, [activity]: next };
+    });
+    setCorrectingIndex(null);
+    setCorrectionDraft("");
+  }
+
   async function send(text = draft) {
     const content = text.trim();
     if (!content || streaming) return;
     setError("");
+    setLearnNote("");
+
+    const autoCorrection = parseCorrectionMessage(content);
+    if (autoCorrection) {
+      const question = [...thread].reverse().find((message) => message.role === "user");
+      if (question) {
+        learnFromCorrection(question.content, autoCorrection.answer, autoCorrection.reason);
+        const ack: StoredMessage = {
+          role: "assistant",
+          content: [
+            "Listo: aprendí la corrección para esa pregunta.",
+            "",
+            `**Pregunta:** ${question.content}`,
+            "",
+            autoCorrection.answer,
+            "",
+            "La próxima vez que preguntes lo mismo (en este oficio), usaré esta versión.",
+          ].join("\n"),
+          mode: "taller",
+        };
+        setThreads((currentThreads) => ({
+          ...currentThreads,
+          [activity]: [...thread, { role: "user", content }, ack],
+        }));
+        setDraft("");
+        return;
+      }
+    }
+
     const historyTurns = [...thread, { role: "user" as const, content }];
     const placeholder: StoredMessage = { role: "assistant", content: "", reasoning: "", mode: "taller" };
     setThreads((currentThreads) => ({ ...currentThreads, [activity]: [...historyTurns, placeholder] }));
@@ -191,6 +269,7 @@ export function TallerApp() {
           effort,
           thinking,
           messages: historyTurns.map((message) => ({ role: message.role, content: message.content })),
+          lessons,
         }),
         signal: controller.signal,
       });
@@ -202,6 +281,7 @@ export function TallerApp() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let learnedFrom: string | null = null;
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -216,11 +296,16 @@ export function TallerApp() {
             text?: string;
             mode?: "model" | "taller";
             message?: string;
+            learnedFrom?: string | null;
           };
           if (payload.type === "error") {
             setError(payload.message || "Algo falló al responder.");
           } else if (payload.type === "content" || payload.type === "reasoning" || payload.type === "done") {
             if (payload.type === "content" && payload.text) answerPreview += payload.text;
+            if (payload.type === "done" && payload.learnedFrom) {
+              learnedFrom = payload.learnedFrom;
+              setLessons((current) => touchLesson(current, payload.learnedFrom!));
+            }
             setThreads((currentThreads) => {
               const list = currentThreads[target] ?? [];
               const last = list[list.length - 1];
@@ -245,6 +330,10 @@ export function TallerApp() {
           preview: answerPreview.replace(/\*\*/g, "").replace(/\s+/g, " ").trim() || "Respuesta del taller",
         }),
       );
+      if (learnedFrom) {
+        setLearnNote("Usé una corrección que aprendí antes.");
+        window.setTimeout(() => setLearnNote(""), 4000);
+      }
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       const message = caught instanceof Error ? caught.message : "No pude completar la petición.";
@@ -369,7 +458,13 @@ export function TallerApp() {
 
         {status === "taller" && (
           <p className="mx-3 mt-2 rounded-xl bg-accent/70 px-3 py-2 text-sm text-accent-foreground md:mx-0 md:mr-3">
-            Modo taller: cada oficio responde aquí. Prueba las interfaces con el botón de paleta.
+            Modo taller: cada oficio responde aquí. Si se equivoca, marca Mal o escribe «está mal, la respuesta es…» y aprende solo.
+            {lessons.length > 0 ? ` Lleva ${lessons.length} corrección${lessons.length === 1 ? "" : "es"} guardada${lessons.length === 1 ? "" : "s"}.` : ""}
+          </p>
+        )}
+        {learnNote && (
+          <p className="mx-3 mt-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-sm md:mx-0 md:mr-3" role="status">
+            {learnNote}
           </p>
         )}
         {error && (
@@ -396,6 +491,20 @@ export function TallerApp() {
                   message={message}
                   pending={streaming && index === thread.length - 1}
                   delay={Math.min(index, 4) * 40}
+                  feedbackEnabled={message.role === "assistant" && !streaming && Boolean(message.content)}
+                  correcting={correctingIndex === index}
+                  correctionDraft={correctingIndex === index ? correctionDraft : ""}
+                  onGood={() => markGood(index)}
+                  onBad={() => {
+                    setCorrectingIndex(index);
+                    setCorrectionDraft("");
+                  }}
+                  onCorrectionChange={setCorrectionDraft}
+                  onCorrectionSubmit={() => submitCorrection(index)}
+                  onCorrectionCancel={() => {
+                    setCorrectingIndex(null);
+                    setCorrectionDraft("");
+                  }}
                 />
               ))
             )}
@@ -706,10 +815,26 @@ function MessageBubble({
   message,
   pending,
   delay = 0,
+  feedbackEnabled = false,
+  correcting = false,
+  correctionDraft = "",
+  onGood,
+  onBad,
+  onCorrectionChange,
+  onCorrectionSubmit,
+  onCorrectionCancel,
 }: {
   message: StoredMessage;
   pending: boolean;
   delay?: number;
+  feedbackEnabled?: boolean;
+  correcting?: boolean;
+  correctionDraft?: string;
+  onGood?: () => void;
+  onBad?: () => void;
+  onCorrectionChange?: (value: string) => void;
+  onCorrectionSubmit?: () => void;
+  onCorrectionCancel?: () => void;
 }) {
   const mine = message.role === "user";
   return (
@@ -741,6 +866,40 @@ function MessageBubble({
           <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
         ) : (
           <MarkdownView text={message.content || (pending ? "" : "…")} />
+        )}
+        {feedbackEnabled && (
+          <div className="mt-3 border-t border-border/70 pt-2">
+            {correcting ? (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">¿Cuál era la respuesta correcta? La guardo para la próxima vez.</p>
+                <Textarea
+                  value={correctionDraft}
+                  rows={2}
+                  className="min-h-14 text-sm"
+                  placeholder="Escribe la respuesta correcta…"
+                  onChange={(event) => onCorrectionChange?.(event.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" onClick={onCorrectionSubmit} disabled={!correctionDraft.trim()}>
+                    Aprender
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={onCorrectionCancel}>
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">¿Le sirvió?</span>
+                <Button type="button" size="sm" variant="outline" onClick={onGood}>
+                  Bien
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={onBad}>
+                  Mal
+                </Button>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </article>
@@ -832,6 +991,7 @@ function HowItWorks() {
         </DialogHeader>
         <div className="space-y-3 text-sm leading-6">
           <p>Cada oficio tiene una herramienta local: cuentas, código, escritura, plan, traducción, resumen o investigación.</p>
+          <p>Si se equivoca, marca Mal o escribe «está mal, la respuesta es…». Guarda la corrección y la reutiliza solo.</p>
           <p>El panel Receta muestra el formato abierto de DeepSeek (deepseek-recipe 0.2.0).</p>
         </div>
       </DialogContent>
@@ -847,6 +1007,7 @@ function readStorage(): {
   skin: SkinId;
   threads: Threads;
   history: HistoryEntry[];
+  lessons: Lesson[];
 } | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem("taller-receta-v1");
@@ -859,6 +1020,7 @@ function readStorage(): {
       skin?: string;
       threads?: Threads;
       history?: unknown;
+      lessons?: unknown;
     };
     if (!parsed.activity || !(parsed.activity in ACTIVITY_MAP)) return null;
     if (parsed.model !== "flash" && parsed.model !== "pro") return null;
@@ -872,6 +1034,7 @@ function readStorage(): {
       skin,
       threads: sanitizeThreads(parsed.threads ?? {}),
       history: sanitizeHistory(parsed.history),
+      lessons: sanitizeLessons(parsed.lessons),
     };
   } catch {
     return null;

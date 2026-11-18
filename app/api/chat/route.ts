@@ -80,7 +80,14 @@ async function tallerStream(request: ChatRequest): Promise<ReadableStream<Uint8A
   return new ReadableStream({
     start(controller) {
       for (const part of parts) controller.enqueue(sse({ type: "content", text: part }));
-      controller.enqueue(sse({ type: "done", mode: "taller", model: MODEL_LABEL[request.model].api }));
+      controller.enqueue(
+        sse({
+          type: "done",
+          mode: "taller",
+          model: MODEL_LABEL[request.model].api,
+          learnedFrom: composed.learnedFrom ?? null,
+        }),
+      );
       controller.close();
     },
   });
