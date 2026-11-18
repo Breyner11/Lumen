@@ -10,7 +10,7 @@ export function PromptView({ prompt }: { prompt: string }) {
     <pre className="font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-words text-foreground">
       {parts.map((part, index) =>
         PROMPT_TOKENS.includes(part as (typeof PROMPT_TOKENS)[number]) ? (
-          <mark key={`${part}-${index}`} className="rounded bg-copper/15 px-0.5 text-copper-ink">
+          <mark key={`${part}-${index}`} className="rounded bg-mark/15 px-0.5 text-mark-ink">
             {part}
           </mark>
         ) : (
