@@ -15,7 +15,7 @@ export const ACTIVITIES: Activity[] = [
     id: "estudiar",
     number: "01",
     label: "Estudiar",
-    blurb: "Convierte un tema o unos apuntes en un plan, preguntas y fichas.",
+    blurb: "Explica el tema y arma un plan de estudio con preguntas.",
     placeholder: "El tema, la duda o los apuntes…",
     starters: [
       "Explícame las fracciones equivalentes como si fuera la primera clase.",
@@ -28,7 +28,7 @@ export const ACTIVITIES: Activity[] = [
     id: "programar",
     number: "02",
     label: "Programar",
-    blurb: "Lee un fragmento o un error y señala qué conviene revisar.",
+    blurb: "Revisa código o arma un ejemplo corto cuando lo pidas.",
     placeholder: "Pega la función, el archivo corto o el error…",
     starters: [
       "```js\nfunction promedio(notas) {\n  var total = 0;\n  for (var i = 0; i <= notas.length; i++) {\n    total += notas[i];\n  }\n  console.log(total);\n  return total / notas.length;\n}\n```",
@@ -41,7 +41,7 @@ export const ACTIVITIES: Activity[] = [
     id: "escribir",
     number: "03",
     label: "Escribir",
-    blurb: "Mide el texto y señala qué oración o bloque está más cargado.",
+    blurb: "Revisa un párrafo o redacta un borrador si lo pides.",
     placeholder: "Pega el párrafo o el ensayo…",
     starters: [
       "La inteligencia artificial es muy importante y muy útil y mucha gente la usa porque es muy importante para el futuro y para estudiar y para trabajar y para todo.",
@@ -75,7 +75,7 @@ export const ACTIVITIES: Activity[] = [
     id: "traducir",
     number: "06",
     label: "Traducir",
-    blurb: "Prepara el texto y, con el modelo, lo traduce sin tocar los nombres.",
+    blurb: "Traduce entre español e inglés y marca nombres propios.",
     placeholder: "El párrafo que quieres pasar a otro idioma…",
     starters: [
       "La Universidad Nacional Abierta y a Distancia queda en Bogotá y el curso de programación empieza el lunes.",
@@ -99,14 +99,15 @@ export const ACTIVITIES: Activity[] = [
     id: "investigar",
     number: "08",
     label: "Investigar",
-    blurb: "Responde la pregunta y marca cómo comprobarla.",
+    blurb: "Consulta varias bases verificables y cita cada fuente.",
     placeholder: "La pregunta que quieres investigar…",
     starters: [
       "¿Qué es la metodología de investigación?",
+      "¿Dónde se ubica la pirámide de Giza?",
       "¿Por qué el agua hierve a menor temperatura en Bogotá que en la costa?",
     ],
     system:
-      "Respondes la pregunta con claridad primero. Después, si ayuda, agregas cómo comprobarla o profundizarla. No inventas citas, cifras ni autores. Si das un mecanismo, explicas cómo se verificaría.",
+      "Respondes con claridad y apoyas lo que afirmas en fuentes con enlace (Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC, Open Library). No inventas citas, DOI, cifras ni autores. Si las bases discrepan, lo dices.",
   },
 ];
 

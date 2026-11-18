@@ -14,7 +14,7 @@ export type ToolResult = {
   notes: string;
 };
 
-export function runActivity(activity: ActivityId, input: string): ToolResult {
+export async function runActivity(activity: ActivityId, input: string): Promise<ToolResult> {
   switch (activity) {
     case "estudiar":
       return studySession(input);
@@ -41,8 +41,8 @@ export function runActivity(activity: ActivityId, input: string): ToolResult {
   }
 }
 
-export function notesForModel(activity: ActivityId, input: string): string {
-  const result = runActivity(activity, input);
+export async function notesForModel(activity: ActivityId, input: string): Promise<string> {
+  const result = await runActivity(activity, input);
   if (!result.applicable || !result.notes) return "";
   return result.notes.length > 4000 ? `${result.notes.slice(0, 4000)}…` : result.notes;
 }

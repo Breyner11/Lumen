@@ -64,7 +64,7 @@ export async function POST(request: Request) {
   }
 
   const modelReady = Boolean(process.env.DEEPSEEK_API_KEY);
-  const stream = modelReady ? modelStream(parsed, request.signal) : tallerStream(parsed);
+  const stream = modelReady ? modelStream(parsed, request.signal) : await tallerStream(parsed);
   return new Response(stream, {
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
@@ -74,8 +74,8 @@ export async function POST(request: Request) {
   });
 }
 
-function tallerStream(request: ChatRequest): ReadableStream<Uint8Array> {
-  const composed = composeConversation({ ...request, now: new Date() });
+async function tallerStream(request: ChatRequest): Promise<ReadableStream<Uint8Array>> {
+  const composed = await composeConversation({ ...request, now: new Date() });
   const parts = chunk(composed.answer, 80);
   return new ReadableStream({
     start(controller) {
@@ -87,10 +87,10 @@ function tallerStream(request: ChatRequest): ReadableStream<Uint8Array> {
 }
 
 function modelStream(request: ChatRequest, signal: AbortSignal): ReadableStream<Uint8Array> {
-  const body = upstreamBody(request, new Date());
   return new ReadableStream({
     async start(controller) {
       try {
+        const body = await upstreamBody(request, new Date());
         const upstream = await fetch(DEEPSEEK_URL, {
           method: "POST",
           headers: {

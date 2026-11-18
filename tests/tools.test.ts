@@ -3,30 +3,30 @@ import test from "node:test";
 import { parseChatRequest } from "../lib/chat-request";
 import { runActivity } from "../lib/tools/index";
 
-test("15% de 240 es 36", () => {
-  const result = runActivity("calcular", "¿Cuánto es el 15% de 240?");
+test("15% de 240 es 36", async () => {
+  const result = await runActivity("calcular", "¿Cuánto es el 15% de 240?");
   assert.equal(result.applicable, true);
   assert.match(result.answer, /\*\*36\*\*/);
 });
 
-test("ecuación lineal 2x + 5 = 17", () => {
-  const result = runActivity("calcular", "Resuelve 2x + 5 = 17");
+test("ecuación lineal 2x + 5 = 17", async () => {
+  const result = await runActivity("calcular", "Resuelve 2x + 5 = 17");
   assert.match(result.answer, /x = 6/);
   assert.match(result.answer, /Comprobación/);
 });
 
-test("mcd de 48 y 18", () => {
-  const result = runActivity("calcular", "mcd de 48 y 18");
+test("mcd de 48 y 18", async () => {
+  const result = await runActivity("calcular", "mcd de 48 y 18");
   assert.match(result.answer, /\*\*6\*\*/);
 });
 
-test("raíz cuadrada de 144", () => {
-  const result = runActivity("calcular", "raíz cuadrada de 144");
+test("raíz cuadrada de 144", async () => {
+  const result = await runActivity("calcular", "raíz cuadrada de 144");
   assert.match(result.answer, /\*\*12\*\*/);
 });
 
-test("la lectura de código marca el índice fuera por uno", () => {
-  const result = runActivity(
+test("la lectura de código marca el índice fuera por uno", async () => {
+  const result = await runActivity(
     "programar",
     "```js\nfunction promedio(notas) {\n  var total = 0;\n  for (var i = 0; i <= notas.length; i++) {\n    total += notas[i];\n  }\n  console.log(total);\n}\n```",
   );
@@ -34,8 +34,8 @@ test("la lectura de código marca el índice fuera por uno", () => {
   assert.match(result.answer, /var/);
 });
 
-test("organizar pone hoy antes que el viernes", () => {
-  const result = runActivity(
+test("organizar pone hoy antes que el viernes", async () => {
+  const result = await runActivity(
     "organizar",
     "Mañana examen de cálculo, el viernes entregar el ensayo y hoy revisar los apuntes de Python.",
   );
@@ -45,11 +45,11 @@ test("organizar pone hoy antes que el viernes", () => {
   assert.match(lines.at(-1) ?? "", /viernes/);
 });
 
-test("resumir extrae oraciones de un texto largo", () => {
+test("resumir extrae oraciones de un texto largo", async () => {
   const text = Array.from({ length: 6 }, (_, index) => {
     return `El ciclo ${index} repite un bloque mientras la condición de las notas se cumple y la función devuelve un promedio.`;
   }).join(" ");
-  const result = runActivity("resumir", text);
+  const result = await runActivity("resumir", text);
   assert.equal(result.applicable, true);
   assert.match(result.answer, /ideas/);
 });
@@ -65,9 +65,35 @@ test("rechaza una conversación que no termina en la persona", () => {
   assert.ok("error" in parsed);
 });
 
-test("investigar responde qué es la metodología de investigación", () => {
-  const result = runActivity("investigar", "que es la metodologia de investigacion");
+test("investigar responde qué es la metodología de investigación", async () => {
+  const result = await runActivity("investigar", "que es la metodologia de investigacion");
   assert.match(result.answer, /conjunto de criterios/i);
   assert.match(result.answer, /enfoque/i);
   assert.doesNotMatch(result.answer, /^Subpreguntas para no responder/m);
+});
+
+test("investigar ubica la pirámide de Giza con varias fuentes", async () => {
+  const result = await runActivity("investigar", "donde se ubica la piramide de giza");
+  assert.equal(result.applicable, true);
+  assert.match(result.answer, /Guiza|Giza|Egipto|El Cairo/i);
+  assert.match(result.answer, /Fuentes consultadas/i);
+  assert.match(result.answer, /Wikipedia|Wikidata|OpenAlex|Crossref|Open Library/i);
+});
+
+test("traducir pasa inglés a español", async () => {
+  const result = await runActivity("traducir", "Hello world. The course starts on Monday.");
+  assert.equal(result.applicable, true);
+  assert.match(result.answer, /Hola|mundo|lunes|curso/i);
+});
+
+test("escribir arma un borrador de correo", async () => {
+  const result = await runActivity("escribir", "Escribe un correo para pedir prórroga del ensayo");
+  assert.equal(result.applicable, true);
+  assert.match(result.answer, /Asunto|Buenos días/i);
+});
+
+test("programar genera un promedio en python", async () => {
+  const result = await runActivity("programar", "Escribe una función en python para el promedio de una lista");
+  assert.equal(result.applicable, true);
+  assert.match(result.answer, /def promedio/);
 });

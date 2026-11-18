@@ -1,21 +1,29 @@
+import { researchBrief } from "@/lib/tools/research";
 import { summarizeText } from "@/lib/tools/summarize";
 import { STOPWORDS, words } from "@/lib/tools/spanish";
 
-export function studySession(input: string): { applicable: boolean; answer: string; notes: string } {
+export async function studySession(input: string): Promise<{
+  applicable: boolean;
+  answer: string;
+  notes: string;
+}> {
   const text = input.trim();
   if (!text) {
     return {
       applicable: false,
-      answer: "Dime el tema, la duda o pega los apuntes. Con un texto largo armo fichas; con una pregunta corta, un plan de tres bloques.",
+      answer:
+        "Dime el tema, la duda o pega los apuntes. Con un texto largo armo fichas; con una pregunta, te explico y te dejo cómo repasarlo.",
       notes: "",
     };
   }
   if (words(text).length >= 80) {
     const summary = summarizeText(text);
     const terms = topTerms(text, 4);
-    const cards = terms.map((term) => `- **${term}.** ¿Qué papel cumple en estos apuntes, y qué ejemplo lo muestra?`);
+    const cards = terms.map(
+      (term) => `- **${term}.** ¿Qué papel cumple en estos apuntes, y qué ejemplo lo muestra?`,
+    );
     const answer = [
-      "Leí los apuntes como material de estudio, no como un examen ya resuelto.",
+      "Leí los apuntes como material de estudio.",
       "",
       summary.answer,
       "",
@@ -28,26 +36,59 @@ export function studySession(input: string): { applicable: boolean; answer: stri
     return {
       applicable: true,
       answer,
-      notes: `Términos que más se repiten en los apuntes: ${terms.join(", ")}.\n${summary.notes}`,
+      notes: `Términos: ${terms.join(", ")}.\n${summary.notes}`,
     };
   }
 
+  // Short questions get a real explanation first (same engine as Investigar).
+  if (
+    words(text).length < 40 &&
+    /^(expl[ií]came|qu[eé]\s+es|qu[eé]\s+significa|c[oó]mo\s+funciona|habla(?:me)?\s+de|por\s+qu[eé]|diferencia)/i.test(
+      text,
+    )
+  ) {
+    const researched = await researchBrief(text);
+    if (researched.applicable) {
+      const answer = [
+        researched.answer,
+        "",
+        "**Para estudiarlo**",
+        "",
+        "1. Reescribe la idea central en una sola oración sin mirar.",
+        "2. Da un ejemplo propio.",
+        "3. Di con qué se confunde este tema.",
+      ].join("\n");
+      return { applicable: true, answer, notes: researched.notes };
+    }
+  }
+
   const topic = text.replace(/\s+/g, " ");
+  const researched = await researchBrief(topic);
+  if (researched.applicable) {
+    const answer = [
+      researched.answer,
+      "",
+      "**Plan de 25 minutos**",
+      "",
+      "1. Subraya la idea central.",
+      "2. Inventa un ejemplo y un contraejemplo.",
+      "3. Explícaselo a alguien en cinco oraciones.",
+    ].join("\n");
+    return { applicable: true, answer, notes: researched.notes };
+  }
+
   const answer = [
     `**Sesión sobre:** ${topic}`,
     "",
-    "Tres bloques de 25 minutos, con un corte de 5 entre ellos.",
-    "",
-    "1. Escribe con tus palabras qué crees que significa, antes de buscar la respuesta.",
+    "1. Escribe con tus palabras qué crees que significa.",
     "2. Busca un ejemplo y un caso donde no se cumpla.",
-    "3. Ciérralo explicándoselo a alguien que no vio la clase, en cinco oraciones.",
+    "3. Ciérralo explicándoselo a alguien que no vio la clase.",
     "",
-    "**Preguntas para no quedarte en la definición**",
+    "**Preguntas**",
     "",
     `- ¿Qué problema resuelve «${clip(topic)}»?`,
-    "- ¿Con qué se confunde, y cómo los distingues?",
-    "- ¿Qué dato tendrías que calcular o recordar en un examen?",
-    "- ¿Qué parte todavía no podrías explicar sin mirar los apuntes?",
+    "- ¿Con qué se confunde?",
+    "- ¿Qué dato tendrías que recordar en un examen?",
   ].join("\n");
   return { applicable: false, answer, notes: "" };
 }

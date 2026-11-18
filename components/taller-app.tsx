@@ -124,11 +124,19 @@ export function TallerApp() {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
   }, [thread, streaming, activity]);
 
-  const preview = useMemo(() => {
+  const [previewPrompt, setPreviewPrompt] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
     const historyTurns = thread.map((message) => ({ role: message.role, content: message.content }));
     const pending = draft.trim();
     const messages = pending ? [...historyTurns, { role: "user" as const, content: pending }] : historyTurns;
-    return composeConversation({ activity, model, effort, thinking, messages });
+    void composeConversation({ activity, model, effort, thinking, messages }).then((composed) => {
+      if (!cancelled) setPreviewPrompt(composed.prompt);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [activity, model, effort, thinking, thread, draft]);
 
   function chooseActivity(next: ActivityId) {
@@ -249,11 +257,11 @@ export function TallerApp() {
 
   const recipe = (
     <RecipePanel
-      prompt={preview.prompt}
+      prompt={previewPrompt}
       modelTitle={MODEL_LABEL[model].recipe}
       copied={copied}
       onCopy={() => {
-        void navigator.clipboard.writeText(preview.prompt).then(() => {
+        void navigator.clipboard.writeText(previewPrompt).then(() => {
           setCopied(true);
           window.setTimeout(() => setCopied(false), 1500);
         });

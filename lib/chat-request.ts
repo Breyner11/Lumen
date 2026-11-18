@@ -58,8 +58,8 @@ export function parseChatRequest(body: unknown): ChatRequest | { error: string }
   };
 }
 
-export function upstreamBody(request: ChatRequest, now: Date): Record<string, unknown> {
-  const composed = composeConversation({ ...request, now });
+export async function upstreamBody(request: ChatRequest, now: Date): Promise<Record<string, unknown>> {
+  const composed = await composeConversation({ ...request, now });
   return {
     model: MODEL_LABEL[request.model].api,
     messages: composed.messages.map((message) => ({ role: message.role, content: message.content })),

@@ -1,6 +1,6 @@
 import { ACTIVITY_MAP, systemPrompt } from "@/lib/activities";
 import { renderRecipePrompt } from "@/lib/recipe-prompt";
-import { notesForModel, runActivity } from "@/lib/tools";
+import { runActivity } from "@/lib/tools";
 import type { ActivityId, ChatTurn, Effort, ModelId, RecipeMessage } from "@/lib/types";
 
 export function lastUserText(messages: ChatTurn[]): string {
@@ -10,17 +10,22 @@ export function lastUserText(messages: ChatTurn[]): string {
   return "";
 }
 
-export function composeConversation(options: {
+export async function composeConversation(options: {
   activity: ActivityId;
   model: ModelId;
   effort: Effort;
   thinking: boolean;
   messages: ChatTurn[];
   now?: Date;
-}): { messages: RecipeMessage[]; prompt: string; answer: string } {
+}): Promise<{ messages: RecipeMessage[]; prompt: string; answer: string }> {
   const latest = lastUserText(options.messages);
-  const tool = runActivity(options.activity, latest);
-  const notes = notesForModel(options.activity, latest);
+  const tool = await runActivity(options.activity, latest);
+  const notes =
+    tool.applicable && tool.notes
+      ? tool.notes.length > 4000
+        ? `${tool.notes.slice(0, 4000)}…`
+        : tool.notes
+      : "";
   const messages: RecipeMessage[] = [
     {
       role: "system",
