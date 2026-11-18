@@ -99,11 +99,14 @@ export const ACTIVITIES: Activity[] = [
     id: "investigar",
     number: "08",
     label: "Investigar",
-    blurb: "Parte una pregunta en pasos que se pueden comprobar.",
+    blurb: "Responde la pregunta y marca cómo comprobarla.",
     placeholder: "La pregunta que quieres investigar…",
-    starters: ["¿Por qué el agua hierve a menor temperatura en Bogotá que en la costa?"],
+    starters: [
+      "¿Qué es la metodología de investigación?",
+      "¿Por qué el agua hierve a menor temperatura en Bogotá que en la costa?",
+    ],
     system:
-      "Ayudas a investigar. Separas la pregunta, dices qué evidencia haría falta y marcas lo que no se puede afirmar todavía. No inventas citas, cifras ni autores. Si das un mecanismo, explicas cómo se comprobaría.",
+      "Respondes la pregunta con claridad primero. Después, si ayuda, agregas cómo comprobarla o profundizarla. No inventas citas, cifras ni autores. Si das un mecanismo, explicas cómo se verificaría.",
   },
 ];
 

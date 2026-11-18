@@ -64,3 +64,10 @@ test("rechaza una conversación que no termina en la persona", () => {
   });
   assert.ok("error" in parsed);
 });
+
+test("investigar responde qué es la metodología de investigación", () => {
+  const result = runActivity("investigar", "que es la metodologia de investigacion");
+  assert.match(result.answer, /conjunto de criterios/i);
+  assert.match(result.answer, /enfoque/i);
+  assert.doesNotMatch(result.answer, /^Subpreguntas para no responder/m);
+});
