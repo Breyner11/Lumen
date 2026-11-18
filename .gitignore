@@ -42,3 +42,5 @@ next-env.d.ts
 
 # RAG engine local data
 /services/rag-engine/data/
+__pycache__/
+*.pyc
