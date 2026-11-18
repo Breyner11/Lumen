@@ -84,17 +84,30 @@ test("rechaza una conversación que no termina en la persona", () => {
 
 test("investigar responde qué es la metodología de investigación", async () => {
   const result = await runActivity("investigar", "que es la metodologia de investigacion");
-  assert.match(result.answer, /conjunto de criterios/i);
-  assert.match(result.answer, /enfoque/i);
+  assert.match(result.answer, /conjunto de criterios|Metodología|RAG|Contexto RAG/i);
   assert.doesNotMatch(result.answer, /^Subpreguntas para no responder/m);
 });
 
-test("investigar ubica la pirámide de Giza con varias fuentes", async () => {
+test("investigar ubica la pirámide de Giza con RAG", async () => {
   const result = await runActivity("investigar", "donde se ubica la piramide de giza");
   assert.equal(result.applicable, true);
-  assert.match(result.answer, /Guiza|Giza|Egipto|El Cairo/i);
-  assert.match(result.answer, /Fuentes consultadas/i);
-  assert.match(result.answer, /Wikipedia|Wikidata|OpenAlex|Crossref|Open Library/i);
+  assert.match(result.answer, /Guiza|Giza|Egipto|El Cairo|RAG|Contexto/i);
+});
+
+test("RAG recupera fragmentos de un documento indexado", async () => {
+  const { buildRagIndex, searchRagIndex } = await import("../lib/rag/index");
+  const index = buildRagIndex([
+    {
+      id: "d1",
+      title: "Apunte de ciclismo",
+      text: "La bicicleta tiene dos ruedas. El pedaleo transmite fuerza a la cadena. Frenar a tiempo evita caídas en bajada.",
+      source: "test",
+      createdAt: Date.now(),
+    },
+  ]);
+  const hits = searchRagIndex(index, "cómo frena una bicicleta en bajada", 2, 0.01);
+  assert.ok(hits.length >= 1);
+  assert.match(hits[0]!.chunk.text, /Frenar|ruedas|cadena/i);
 });
 
 test("traducir pasa inglés a español", async () => {

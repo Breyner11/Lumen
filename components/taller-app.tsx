@@ -10,6 +10,7 @@ import {
   Code2,
   History,
   Languages,
+  Library,
   ListChecks,
   Palette,
   PanelRight,
@@ -28,6 +29,9 @@ import {
   upsertLesson,
   type Lesson,
 } from "@/lib/lessons";
+import { addDocument, removeDocument, seedDocuments } from "@/lib/rag/documents";
+import { sanitizeDocuments } from "@/lib/rag/pipeline";
+import type { RagDocument } from "@/lib/rag/types";
 import { composeRecipePreview } from "@/lib/recipe-preview";
 import { isSkinId, SKINS, type SkinId } from "@/lib/skins";
 import type { ActivityId, Effort, ModelId, StoredMessage } from "@/lib/types";
@@ -71,6 +75,7 @@ export function TallerApp() {
   const [threads, setThreads] = useState<Threads>({});
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [documents, setDocuments] = useState<RagDocument[]>([]);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
@@ -78,7 +83,10 @@ export function TallerApp() {
   const [activitiesOpen, setActivitiesOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [skinsOpen, setSkinsOpen] = useState(false);
+  const [docTitle, setDocTitle] = useState("");
+  const [docText, setDocText] = useState("");
   const [copied, setCopied] = useState(false);
   const [ready, setReady] = useState(false);
   const [correctingIndex, setCorrectingIndex] = useState<number | null>(null);
@@ -101,8 +109,10 @@ export function TallerApp() {
       setThreads(stored.threads);
       setHistory(stored.history);
       setLessons(stored.lessons);
+      setDocuments(stored.documents.length ? stored.documents : seedDocuments());
       document.documentElement.dataset.skin = stored.skin;
     } else {
+      setDocuments(seedDocuments());
       document.documentElement.dataset.skin = "brisa";
     }
     setReady(true);
@@ -128,9 +138,9 @@ export function TallerApp() {
     if (!ready) return;
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ activity, model, effort, thinking, skin, threads, history, lessons }),
+      JSON.stringify({ activity, model, effort, thinking, skin, threads, history, lessons, documents }),
     );
-  }, [activity, model, effort, thinking, skin, threads, history, lessons, ready]);
+  }, [activity, model, effort, thinking, skin, threads, history, lessons, documents, ready]);
 
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
@@ -270,6 +280,7 @@ export function TallerApp() {
           thinking,
           messages: historyTurns.map((message) => ({ role: message.role, content: message.content })),
           lessons,
+          documents,
         }),
         signal: controller.signal,
       });
@@ -396,6 +407,11 @@ export function TallerApp() {
             Historial
             {history.length > 0 && <Badge className="ml-auto" variant="secondary">{history.length}</Badge>}
           </Button>
+          <Button variant="ghost" className="w-full justify-start" onClick={() => setKnowledgeOpen(true)}>
+            <Library />
+            Conocimiento RAG
+            {documents.length > 0 && <Badge className="ml-auto" variant="secondary">{documents.length}</Badge>}
+          </Button>
         </div>
       </aside>
 
@@ -414,6 +430,9 @@ export function TallerApp() {
           </Button>
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setHistoryOpen(true)} aria-label="Historial">
             <History />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={() => setKnowledgeOpen(true)} aria-label="Conocimiento RAG">
+            <Library />
           </Button>
           <Button variant="ghost" size="icon" onClick={() => setSkinsOpen(true)} aria-label="Interfaces">
             <Palette />
@@ -582,6 +601,68 @@ export function TallerApp() {
             <SheetTitle className="font-heading italic">Historial</SheetTitle>
           </SheetHeader>
           <div className="px-1">{historyList}</div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={knowledgeOpen} onOpenChange={setKnowledgeOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="font-heading italic">Conocimiento RAG</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-4 px-1 pb-6">
+            <p className="text-sm leading-6 text-muted-foreground">
+              Pega apuntes o textos. Taller los parte en fragmentos, los indexa (TF-IDF) y recupera los más parecidos a tu pregunta antes de responder.
+            </p>
+            <div className="space-y-2">
+              <input
+                value={docTitle}
+                onChange={(event) => setDocTitle(event.target.value)}
+                placeholder="Título del documento"
+                className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm"
+              />
+              <Textarea
+                value={docText}
+                onChange={(event) => setDocText(event.target.value)}
+                placeholder="Pega aquí el texto (mínimo un párrafo)…"
+                rows={6}
+                className="text-sm"
+              />
+              <Button
+                type="button"
+                className="w-full"
+                disabled={docText.trim().length < 20}
+                onClick={() => {
+                  setDocuments((current) => addDocument(current, { title: docTitle, text: docText }));
+                  setDocTitle("");
+                  setDocText("");
+                }}
+              >
+                Indexar documento
+              </Button>
+            </div>
+            <div className="space-y-2">
+              {documents.map((document) => (
+                <div key={document.id} className="rounded-xl border border-border bg-card/70 px-3 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{document.title}</p>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{document.text}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">{document.source ?? "usuario"}</p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Quitar ${document.title}`}
+                      onClick={() => setDocuments((current) => removeDocument(current, document.id))}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </SheetContent>
       </Sheet>
 
@@ -992,6 +1073,7 @@ function HowItWorks() {
         <div className="space-y-3 text-sm leading-6">
           <p>Cada oficio tiene una herramienta local: cuentas, código, escritura, plan, traducción, resumen o investigación.</p>
           <p>Si se equivoca, marca Mal o escribe «está mal, la respuesta es…». Guarda la corrección y la reutiliza solo.</p>
+          <p>RAG: indexa documentos en Conocimiento, recupera fragmentos por similitud y los usa al responder. Investigar también indexa fuentes en vivo.</p>
           <p>El panel Receta muestra el formato abierto de DeepSeek (deepseek-recipe 0.2.0).</p>
         </div>
       </DialogContent>
@@ -1008,6 +1090,7 @@ function readStorage(): {
   threads: Threads;
   history: HistoryEntry[];
   lessons: Lesson[];
+  documents: RagDocument[];
 } | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem("taller-receta-v1");
@@ -1021,6 +1104,7 @@ function readStorage(): {
       threads?: Threads;
       history?: unknown;
       lessons?: unknown;
+      documents?: unknown;
     };
     if (!parsed.activity || !(parsed.activity in ACTIVITY_MAP)) return null;
     if (parsed.model !== "flash" && parsed.model !== "pro") return null;
@@ -1035,6 +1119,7 @@ function readStorage(): {
       threads: sanitizeThreads(parsed.threads ?? {}),
       history: sanitizeHistory(parsed.history),
       lessons: sanitizeLessons(parsed.lessons),
+      documents: sanitizeDocuments(parsed.documents),
     };
   } catch {
     return null;

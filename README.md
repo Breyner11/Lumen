@@ -12,6 +12,26 @@ Con `DEEPSEEK_API_KEY` las respuestas pasan por DeepSeek; sin clave, el modo tal
 
 Si una respuesta falla, marca **Mal** y escribe la correcta, o envía «está mal, la respuesta es…». Taller guarda esa corrección en tu navegador y, la próxima vez que hagas la misma pregunta en ese oficio, usa lo aprendido.
 
+## Arquitectura RAG
+
+```
+Documentos / lecciones / fuentes en vivo
+        │
+        ▼
+   Chunking (ventanas solapadas)
+        │
+        ▼
+   Índice TF-IDF disperso
+        │
+        ▼
+   Retrieve top-k (similitud coseno)
+        │
+        ▼
+   Augment → respuesta / prompt DeepSeek
+```
+
+En **Conocimiento RAG** pegas apuntes; Investigar además indexa Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC y Open Library al vuelo.
+
 ## Uso local
 
 ```sh

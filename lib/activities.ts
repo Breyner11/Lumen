@@ -99,7 +99,7 @@ export const ACTIVITIES: Activity[] = [
     id: "investigar",
     number: "08",
     label: "Investigar",
-    blurb: "Consulta varias bases verificables y cita cada fuente.",
+    blurb: "RAG sobre tus docs y bases verificables con citas.",
     placeholder: "La pregunta que quieres investigar…",
     starters: [
       "¿Qué es la metodología de investigación?",

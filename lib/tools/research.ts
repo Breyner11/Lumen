@@ -1,8 +1,9 @@
-import { formatMultiSourceAnswer, gatherSources } from "@/lib/tools/sources";
+import { runRagPipeline } from "@/lib/rag/pipeline";
+import type { RagDocument } from "@/lib/rag/types";
+import type { Lesson } from "@/lib/lessons";
 
 type ToolResult = { applicable: boolean; answer: string; notes: string };
 
-/** Known short explanations for frequent school/university questions. */
 const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
   {
     match: /metodolog[ií]a\s+de\s+(?:la\s+)?investigaci[oó]n|metodolog[ií]a\s+investigativa/,
@@ -10,16 +11,14 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
     body: [
       "Es el **conjunto de criterios, pasos y técnicas** que usas para plantear un problema, recoger información, analizarla y llegar a conclusiones de forma ordenada y comprobable.",
       "",
-      "No es solo “el método” suelto: es la justificación de **por qué** eliges un enfoque (cualitativo, cuantitativo o mixto), **cómo** vas a obtener datos (encuestas, entrevistas, observación, documentos, experimentos) y **con qué reglas** vas a interpretarlos.",
-      "",
-      "**Partes habituales:** problema, objetivos, enfoque, diseño, población/muestra, técnicas, análisis, ética y límites.",
+      "Incluye problema, objetivos, enfoque, diseño, población/muestra, técnicas, análisis, ética y límites.",
     ].join("\n"),
   },
   {
     match: /investigaci[oó]n\s+cient[ií]fica/,
     title: "Investigación científica",
     body: [
-      "Es un proceso **sistemático** para producir conocimiento confiable: se parte de una pregunta, se revisa lo ya sabido, se elige un método, se recogen datos y se contrastan las conclusiones con la evidencia.",
+      "Es un proceso **sistemático** para producir conocimiento confiable: pregunta, revisión, método, datos y contraste con la evidencia.",
     ].join("\n"),
   },
   {
@@ -30,72 +29,73 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
     ].join("\n"),
   },
   {
-    match: /\bvariable(?:s)?\b.*investig|\binvestig.*\bvariable/,
-    title: "Variables en investigación",
-    body: [
-      "Una **variable** es una característica que puede cambiar y que mides o describes en el estudio (edad, nota, motivación, temperatura).",
-      "",
-      "En diseños con causa y efecto suele hablarse de variable **independiente** y **dependiente**.",
-    ].join("\n"),
-  },
-  {
     match: /agua\s+hierve|ebullici[oó]n.*bogot|bogot.*ebullici[oó]n|hierve.*altitud|altitud.*hierve/,
     title: "Por qué el agua hierve a menor temperatura en Bogotá",
     body: [
       "Porque **la presión atmosférica baja con la altitud**. A menor presión, el agua alcanza el punto de ebullición con menos calor.",
       "",
-      "A nivel del mar hierve cerca de **100 °C**. En Bogotá (unos 2.600 m) suele hervir alrededor de **90–92 °C**, según la presión del día.",
+      "A nivel del mar hierve cerca de **100 °C**. En Bogotá (unos 2.600 m) suele hervir alrededor de **90–92 °C**.",
     ].join("\n"),
   },
 ];
 
-export async function researchBrief(input: string): Promise<ToolResult> {
+export async function researchBrief(
+  input: string,
+  options?: { documents?: RagDocument[]; lessons?: Lesson[] },
+): Promise<ToolResult> {
   const question = input.trim().replace(/\s+/g, " ");
   if (question.length < 3) {
     return {
       applicable: false,
       answer:
-        "Escribe la pregunta. Consulto Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC y Open Library, y te dejo solo lo que tenga enlace verificable.",
+        "Escribe la pregunta. Uso RAG sobre tus documentos y bases verificables (Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC, Open Library).",
       notes: "",
     };
   }
 
   const lower = question.toLowerCase();
   const known = KNOWN.find((item) => item.match.test(lower));
-  const hits = await gatherSources(question);
+  const rag = await runRagPipeline({
+    query: question,
+    activity: "investigar",
+    documents: options?.documents,
+    lessons: options?.lessons,
+    includeLiveSources: true,
+  });
 
-  if (known) {
-    const lead = [`**${known.title}**`, "", known.body].join("\n");
-    if (hits.length) {
-      return {
-        applicable: true,
-        answer: formatMultiSourceAnswer(question, hits, lead),
-        notes: `Taller + ${[...new Set(hits.map((hit) => hit.source))].join(", ")}`,
-      };
-    }
+  if (known && !rag.hits.length) {
     return {
       applicable: true,
-      answer: [`**Pregunta:** ${question}`, "", lead].join("\n"),
+      answer: [`**${known.title}**`, "", known.body].join("\n"),
       notes: `${known.title}: explicación del taller.`,
     };
   }
 
-  if (hits.length) {
+  if (rag.hits.length) {
+    const lead = known ? [`**${known.title}**`, "", known.body, ""].join("\n") : "";
+    const answer = [
+      `**Pregunta:** ${question}`,
+      "",
+      lead,
+      "Respuesta con **RAG** (recuperación + generación local):",
+      "",
+      rag.answerBlock,
+      "",
+      "_Los fragmentos se eligieron por similitud TF-IDF/coseno sobre el índice. Revisa siempre el enlace o la fuente._",
+    ].join("\n");
     return {
       applicable: true,
-      answer: formatMultiSourceAnswer(question, hits),
-      notes: `Fuentes: ${[...new Set(hits.map((hit) => hit.source))].join(", ")}`,
+      answer,
+      notes: rag.promptBlock.slice(0, 4000),
     };
   }
 
   return {
     applicable: false,
     answer: [
-      `No hallé fichas verificables para «${question}».`,
+      `No recuperé fragmentos útiles para «${question}».`,
       "",
-      "Probé Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC y Open Library.",
-      "",
-      "Reformula con el nombre propio o el término exacto (por ejemplo «Gran Pirámide de Guiza»).",
+      "Prueba a reformular, o carga un apunte en **Conocimiento RAG** para indexarlo.",
     ].join("\n"),
     notes: "",
   };

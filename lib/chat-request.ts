@@ -1,6 +1,8 @@
 import { MODEL_LABEL } from "@/lib/activities";
 import { composeConversation } from "@/lib/compose";
 import { sanitizeLessons, type Lesson } from "@/lib/lessons";
+import { sanitizeDocuments } from "@/lib/rag/pipeline";
+import type { RagDocument } from "@/lib/rag/types";
 import type { ActivityId, ChatTurn, Effort, ModelId } from "@/lib/types";
 import { ACTIVITY_IDS, EFFORTS, MODEL_IDS } from "@/lib/types";
 
@@ -15,6 +17,7 @@ export type ChatRequest = {
   thinking: boolean;
   messages: ChatTurn[];
   lessons: Lesson[];
+  documents: RagDocument[];
 };
 
 export function parseChatRequest(body: unknown): ChatRequest | { error: string } {
@@ -58,6 +61,7 @@ export function parseChatRequest(body: unknown): ChatRequest | { error: string }
     thinking: record.thinking as boolean,
     messages,
     lessons: sanitizeLessons(record.lessons).slice(0, 80),
+    documents: sanitizeDocuments(record.documents).slice(0, 40),
   };
 }
 

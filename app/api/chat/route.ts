@@ -86,6 +86,7 @@ async function tallerStream(request: ChatRequest): Promise<ReadableStream<Uint8A
           mode: "taller",
           model: MODEL_LABEL[request.model].api,
           learnedFrom: composed.learnedFrom ?? null,
+          ragHits: composed.ragHits ?? 0,
         }),
       );
       controller.close();

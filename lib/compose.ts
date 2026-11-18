@@ -1,6 +1,10 @@
 import { ACTIVITY_MAP, systemPrompt } from "@/lib/activities";
 import { findLesson, formatLessonAnswer, type Lesson } from "@/lib/lessons";
+import { augmentAnswerWithRag } from "@/lib/rag/augment";
+import { runRagPipeline } from "@/lib/rag/pipeline";
+import type { RagDocument } from "@/lib/rag/types";
 import { renderRecipePrompt } from "@/lib/recipe-prompt";
+import { researchBrief } from "@/lib/tools/research";
 import { runActivity } from "@/lib/tools";
 import type { ActivityId, ChatTurn, Effort, ModelId, RecipeMessage } from "@/lib/types";
 
@@ -31,10 +35,18 @@ export async function composeConversation(options: {
   thinking: boolean;
   messages: ChatTurn[];
   lessons?: Lesson[];
+  documents?: RagDocument[];
   now?: Date;
-}): Promise<{ messages: RecipeMessage[]; prompt: string; answer: string; learnedFrom?: string }> {
+}): Promise<{
+  messages: RecipeMessage[];
+  prompt: string;
+  answer: string;
+  learnedFrom?: string;
+  ragHits?: number;
+}> {
   const latest = lastUserText(options.messages);
   const lessons = options.lessons ?? [];
+  const documents = options.documents ?? [];
   const learned = findLesson(lessons, options.activity, latest);
   if (learned) {
     const answer = formatLessonAnswer(learned);
@@ -59,13 +71,43 @@ export async function composeConversation(options: {
     };
   }
 
+  if (options.activity === "investigar") {
+    const tool = await researchBrief(latest, { documents, lessons });
+    const messages: RecipeMessage[] = [
+      {
+        role: "system",
+        content: systemPrompt(ACTIVITY_MAP[options.activity], tool.notes, options.now),
+      },
+      ...options.messages,
+    ];
+    return {
+      messages,
+      prompt: renderRecipePrompt({
+        model: options.model,
+        effort: options.effort,
+        thinking: options.thinking,
+        messages,
+      }),
+      answer: tool.answer,
+      ragHits: tool.notes.includes("Contexto recuperado por RAG") || tool.answer.includes("Contexto RAG")
+        ? 1
+        : 0,
+    };
+  }
+
+  const rag = await runRagPipeline({
+    query: latest,
+    activity: options.activity,
+    documents,
+    lessons,
+    includeLiveSources: options.activity === "estudiar",
+  });
+
   const tool = await runActivity(options.activity, latest);
-  const notes =
-    tool.applicable && tool.notes
-      ? tool.notes.length > 4000
-        ? `${tool.notes.slice(0, 4000)}…`
-        : tool.notes
-      : "";
+  const notesParts = [tool.applicable && tool.notes ? tool.notes : "", rag.promptBlock].filter(Boolean);
+  const notes = notesParts.join("\n\n").slice(0, 6000);
+  const answer = rag.hits.length ? augmentAnswerWithRag(tool.answer, rag) : tool.answer;
+
   const messages: RecipeMessage[] = [
     {
       role: "system",
@@ -81,6 +123,7 @@ export async function composeConversation(options: {
       thinking: options.thinking,
       messages,
     }),
-    answer: tool.answer,
+    answer,
+    ragHits: rag.hits.length,
   };
 }
