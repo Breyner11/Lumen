@@ -621,6 +621,8 @@ export function TallerApp() {
             mode?: "model" | "taller";
             message?: string;
             learnedFrom?: string | null;
+            images?: Array<{ url: string; title?: string }>;
+            sources?: Array<{ title: string; url: string }>;
           };
           if (payload.type === "error") {
             setError(payload.message || "Algo falló al responder.");
@@ -641,6 +643,8 @@ export function TallerApp() {
                 reasoning:
                   payload.type === "reasoning" ? `${last.reasoning ?? ""}${payload.text ?? ""}` : last.reasoning,
                 mode: payload.type === "done" ? payload.mode ?? last.mode : last.mode,
+                images: payload.type === "done" && payload.images ? payload.images : last.images,
+                sources: payload.type === "done" && payload.sources ? payload.sources : last.sources,
               };
               return { ...currentThreads, [target]: next };
             });
@@ -1418,7 +1422,11 @@ function MessageBubble({
         {mine ? (
           <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
         ) : (
-          <MarkdownView text={message.content || (pending ? "" : "…")} />
+          <MarkdownView
+            text={message.content || (pending ? "" : "…")}
+            images={message.images}
+            sources={message.sources}
+          />
         )}
         {feedbackEnabled && (
           <div className="mt-3 space-y-2 border-t border-border/70 pt-2">
@@ -1625,6 +1633,24 @@ function sanitizeThreads(threads: Threads): Threads {
         content: message.content.slice(0, 12_000),
         reasoning: typeof message.reasoning === "string" ? message.reasoning.slice(0, 20_000) : undefined,
         mode: message.mode === "model" ? "model" : message.mode === "taller" ? "taller" : undefined,
+        images: Array.isArray(message.images)
+          ? message.images
+              .filter((image) => image && typeof image.url === "string" && image.url.startsWith("http"))
+              .slice(0, 3)
+              .map((image) => ({
+                url: image.url,
+                title: typeof image.title === "string" ? image.title.slice(0, 120) : undefined,
+              }))
+          : undefined,
+        sources: Array.isArray(message.sources)
+          ? message.sources
+              .filter((source) => source && typeof source.title === "string")
+              .slice(0, 12)
+              .map((source) => ({
+                title: source.title.slice(0, 160),
+                url: typeof source.url === "string" ? source.url.slice(0, 500) : "",
+              }))
+          : undefined,
       }));
   }
   return clean;

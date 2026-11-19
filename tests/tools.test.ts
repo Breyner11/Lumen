@@ -91,7 +91,9 @@ test("investigar responde qué es la metodología de investigación", async () =
 test("investigar ubica la pirámide de Giza con RAG", async () => {
   const result = await runActivity("investigar", "donde se ubica la piramide de giza");
   assert.equal(result.applicable, true);
-  assert.match(result.answer, /Guiza|Giza|Egipto|El Cairo|RAG|Contexto/i);
+  // Con Ollama: respuesta redactada. Sin Ollama: aviso de arranque (nunca contexto crudo).
+  assert.match(result.answer, /Guiza|Giza|Egipto|El Cairo|Iniciando modelo DeepSeek/i);
+  assert.doesNotMatch(result.answer, /Contexto recuperado\. Úsalo para redactar/i);
 });
 
 test("RAG recupera fragmentos de un documento indexado", async () => {

@@ -29,12 +29,8 @@ export function formatRagContext(
     ].join("\n");
   });
 
-  // Solo para el modelo (contexto interno), nunca para volcar al usuario.
-  const promptBlock = [
-    "Contexto recuperado. Úsalo para redactar; no lo copies literal:",
-    "",
-    ...lines,
-  ].join("\n");
+  // Solo para Ollama (contexto interno). Nunca se muestra en el chat.
+  const promptBlock = ["Material interno para redactar:", "", ...lines].join("\n");
 
   const answerBlock = hits
     .slice(0, 5)

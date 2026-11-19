@@ -4,9 +4,20 @@ import { useState, type ReactNode } from "react";
 import { ExternalLink, Link2, X } from "lucide-react";
 import { stripCitationBlocks } from "@/lib/rag/citations";
 
-export function MarkdownView({ text }: { text: string }) {
+export function MarkdownView({
+  text,
+  images: imagesProp,
+  sources: sourcesProp,
+}: {
+  text: string;
+  images?: Array<{ url: string; title?: string }>;
+  sources?: Array<{ title: string; url: string }>;
+}) {
   const { thinking, content: afterThink } = splitThinking(text);
-  const { content, images, sources } = stripCitationBlocks(afterThink);
+  const stripped = stripCitationBlocks(afterThink);
+  const content = stripped.content;
+  const images = imagesProp?.length ? imagesProp : stripped.images;
+  const sources = sourcesProp?.length ? sourcesProp : stripped.sources;
   const [lightbox, setLightbox] = useState<{ url: string; title: string } | null>(null);
 
   return (

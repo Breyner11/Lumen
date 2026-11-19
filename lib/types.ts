@@ -27,6 +27,8 @@ export type ChatTurn = {
 export type StoredMessage = ChatTurn & {
   reasoning?: string;
   mode?: "model" | "taller";
+  images?: Array<{ url: string; title?: string }>;
+  sources?: Array<{ title: string; url: string }>;
 };
 
 export type RecipeMessage = {

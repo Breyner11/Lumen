@@ -1,11 +1,18 @@
-import { sourcesFromHits } from "@/lib/rag/citations";
+import { sourcesFromHits, type CitationImage, type CitationSource } from "@/lib/rag/citations";
 import { runRagPipeline } from "@/lib/rag/pipeline";
 import type { RagDocument } from "@/lib/rag/types";
 import type { Lesson } from "@/lib/lessons";
 import { polishAnswer } from "@/lib/tools/polish";
 import type { ChatTurn } from "@/lib/types";
 
-type ToolResult = { applicable: boolean; answer: string; notes: string };
+type ToolResult = {
+  applicable: boolean;
+  answer: string;
+  notes: string;
+  thinking?: string;
+  images: CitationImage[];
+  sources: CitationSource[];
+};
 
 const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
   {
@@ -40,6 +47,8 @@ export async function researchBrief(
       applicable: false,
       answer: "Escribe la pregunta para investigarla con fuentes y memoria local.",
       notes: "",
+      images: [],
+      sources: [],
     };
   }
 
@@ -53,24 +62,13 @@ export async function researchBrief(
     includeLiveSources: true,
   });
 
+  // Solo para Ollama: nunca se muestra al usuario.
   const internal = [
     known ? `Dato del taller — ${known.title}: ${known.body}` : "",
     rag.promptBlock || rag.answerBlock,
   ]
     .filter(Boolean)
     .join("\n\n");
-
-  if (!internal && !rag.images.length) {
-    return {
-      applicable: false,
-      answer: [
-        `No recuperé material útil para «${question}».`,
-        "",
-        "Prueba a reformular o carga un documento en el botón +.",
-      ].join("\n"),
-      notes: "",
-    };
-  }
 
   const sources =
     rag.sources.length > 0
@@ -82,7 +80,21 @@ export async function researchBrief(
           })),
         );
 
-  const answer = await polishAnswer({
+  if (!internal && !rag.images.length) {
+    return {
+      applicable: false,
+      answer: [
+        `No recuperé material útil para «${question}».`,
+        "",
+        "Prueba a reformular o carga un documento en el botón +.",
+      ].join("\n"),
+      notes: "",
+      images: [],
+      sources: [],
+    };
+  }
+
+  const polished = await polishAnswer({
     question,
     context: internal,
     messages: options?.messages,
@@ -90,9 +102,22 @@ export async function researchBrief(
     sources,
   });
 
+  if (!polished.ok && known) {
+    return {
+      applicable: true,
+      answer: `**${known.title}**\n\n${known.body}`,
+      images: polished.images,
+      sources: polished.sources,
+      notes: "",
+    };
+  }
+
   return {
     applicable: true,
-    answer,
-    notes: rag.promptBlock.slice(0, 4000),
+    answer: polished.text,
+    thinking: polished.thinking,
+    images: polished.images,
+    sources: polished.sources,
+    notes: "",
   };
 }

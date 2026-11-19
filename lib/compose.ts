@@ -1,5 +1,10 @@
 import { ACTIVITY_MAP, systemPrompt } from "@/lib/activities";
 import { findLesson, formatLessonAnswer, type Lesson } from "@/lib/lessons";
+import {
+  stripCitationBlocks,
+  type CitationImage,
+  type CitationSource,
+} from "@/lib/rag/citations";
 import { engineLearnNow, engineRememberLesson } from "@/lib/rag/engine-client";
 import { runRagPipeline } from "@/lib/rag/pipeline";
 import type { RagDocument } from "@/lib/rag/types";
@@ -33,6 +38,17 @@ export function previousUserText(messages: ChatTurn[]): string {
   return "";
 }
 
+export type ComposeResult = {
+  messages: RecipeMessage[];
+  prompt: string;
+  answer: string;
+  thinking?: string;
+  images: CitationImage[];
+  sources: CitationSource[];
+  learnedFrom?: string;
+  ragHits?: number;
+};
+
 export async function composeConversation(options: {
   activity: ActivityId;
   model: ModelId;
@@ -42,13 +58,7 @@ export async function composeConversation(options: {
   lessons?: Lesson[];
   documents?: RagDocument[];
   now?: Date;
-}): Promise<{
-  messages: RecipeMessage[];
-  prompt: string;
-  answer: string;
-  learnedFrom?: string;
-  ragHits?: number;
-}> {
+}): Promise<ComposeResult> {
   const latest = lastUserText(options.messages);
   const lessons = options.lessons ?? [];
   const documents = options.documents ?? [];
@@ -75,19 +85,26 @@ export async function composeConversation(options: {
       answer: learned.answer,
       reason: learned.reason,
     });
-    const polished =
-      languageMode === "translate"
-        ? answer
-        : await polishAnswer({
-            question: latest,
-            context: answer,
-            messages: options.messages,
-            style,
-          });
-    return wrap(options, notes, polished, {
+    if (languageMode === "translate") {
+      return wrap(options, notes, answer, {
+        learnedFrom: learned.id,
+        badge: routedIntent ? intentLabel(routedIntent) : undefined,
+        languageMode,
+      });
+    }
+    const polished = await polishAnswer({
+      question: latest,
+      context: answer,
+      messages: options.messages,
+      style,
+    });
+    return wrap(options, notes, polished.text, {
       learnedFrom: learned.id,
       badge: routedIntent ? intentLabel(routedIntent) : undefined,
       languageMode,
+      thinking: polished.thinking,
+      images: polished.images,
+      sources: polished.sources,
     });
   }
 
@@ -105,7 +122,13 @@ export async function composeConversation(options: {
         messages: options.messages,
         style,
       });
-      return wrap(options, tool.notes, polished, { ragHits: 1, languageMode });
+      return wrap(options, tool.notes, polished.text, {
+        ragHits: 1,
+        languageMode,
+        thinking: polished.thinking,
+        images: polished.images,
+        sources: polished.sources,
+      });
     }
     if (routedIntent === "proyecto") {
       const tool = await handleProject(latest);
@@ -124,9 +147,12 @@ export async function composeConversation(options: {
         messages: options.messages,
         style,
       });
-      return wrap(options, analyzed?.text?.slice(0, 1000) || "", polished, {
+      return wrap(options, analyzed?.text?.slice(0, 1000) || "", polished.text, {
         ragHits: 1,
         languageMode,
+        thinking: polished.thinking,
+        images: polished.images,
+        sources: polished.sources,
       });
     }
   }
@@ -138,13 +164,17 @@ export async function composeConversation(options: {
       messages: options.messages,
     });
     void engineLearnFromQuery(latest);
-    const answer =
-      routedIntent === "investigar" && !tool.answer.includes("Herramienta:")
-        ? `_Herramienta: Investigar_\n\n${tool.answer}`
-        : tool.answer;
-    return wrap(options, tool.notes, answer, {
-      ragHits: tool.notes.includes("Contexto recuperado") || tool.applicable ? 1 : 0,
+    const body = tool.answer;
+    const withBadge =
+      routedIntent === "investigar" && !body.includes("Herramienta:")
+        ? `_Herramienta: Investigar_\n\n${body}`
+        : body;
+    return wrap(options, "", withBadge, {
+      ragHits: tool.applicable ? 1 : 0,
       languageMode,
+      thinking: tool.thinking,
+      images: tool.images,
+      sources: tool.sources,
     });
   }
 
@@ -160,8 +190,8 @@ export async function composeConversation(options: {
   });
 
   const tool = await runActivity(options.activity, latest);
-  const notesParts = [tool.applicable && tool.notes ? tool.notes : "", rag.promptBlock].filter(Boolean);
-  const notes = notesParts.join("\n\n").slice(0, 6000);
+  // El promptBlock es solo material interno para Ollama; no va al chat ni a la receta visible.
+  const notes = (tool.applicable && tool.notes ? tool.notes : "").slice(0, 2000);
 
   const shouldPolish =
     languageMode === "spanish" &&
@@ -172,20 +202,32 @@ export async function composeConversation(options: {
       options.activity === "organizar" ||
       rag.hits.length > 0);
 
-  const answer = shouldPolish
-    ? await polishAnswer({
-        question: latest,
-        context: [tool.answer, rag.answerBlock].filter(Boolean).join("\n\n"),
-        messages: options.messages,
-        style,
-        images: rag.images,
-        sources: rag.sources,
-      })
-    : tool.answer;
+  if (shouldPolish) {
+    const polished = await polishAnswer({
+      question: latest,
+      context: [tool.answer, rag.promptBlock || rag.answerBlock].filter(Boolean).join("\n\n"),
+      messages: options.messages,
+      style,
+      images: rag.images,
+      sources: rag.sources,
+    });
+    if (rag.hits.length) void engineLearnFromQuery(latest);
+    return wrap(options, notes, polished.text, {
+      ragHits: rag.hits.length,
+      languageMode,
+      thinking: polished.thinking,
+      images: polished.images,
+      sources: polished.sources,
+    });
+  }
 
   if (rag.hits.length) void engineLearnFromQuery(latest);
-
-  return wrap(options, notes, answer, { ragHits: rag.hits.length, languageMode });
+  return wrap(options, notes, tool.answer, {
+    ragHits: rag.hits.length,
+    languageMode,
+    images: rag.images,
+    sources: rag.sources,
+  });
 }
 
 function wrap(
@@ -204,12 +246,28 @@ function wrap(
     ragHits?: number;
     badge?: string;
     languageMode?: "spanish" | "translate";
+    thinking?: string;
+    images?: CitationImage[];
+    sources?: CitationSource[];
   },
-) {
+): ComposeResult {
+  const detached = stripCitationBlocks(answer);
+  const thinking =
+    meta?.thinking ||
+    (() => {
+      const match = /<think>([\s\S]*?)<\/think>/i.exec(detached.content);
+      return match?.[1]?.trim() || undefined;
+    })();
+  const cleanAnswer = detached.content
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/Contexto recuperado\. Úsalo para redactar; no lo copies literal:/gi, "")
+    .trim();
+
   const finalAnswer =
-    meta?.badge && !answer.includes("Herramienta:")
-      ? `_Herramienta: ${meta.badge}_\n\n${answer}`
-      : answer;
+    meta?.badge && !cleanAnswer.includes("Herramienta:")
+      ? `_Herramienta: ${meta.badge}_\n\n${cleanAnswer}`
+      : cleanAnswer;
+
   const languageMode =
     meta?.languageMode ?? (options.activity === "traducir" ? "translate" : "spanish");
   const messages: RecipeMessage[] = [
@@ -228,6 +286,9 @@ function wrap(
       messages,
     }),
     answer: finalAnswer,
+    thinking,
+    images: (meta?.images?.length ? meta.images : detached.images).slice(0, 3),
+    sources: (meta?.sources?.length ? meta.sources : detached.sources).slice(0, 12),
     learnedFrom: meta?.learnedFrom,
     ragHits: meta?.ragHits ?? 0,
   };

@@ -1,6 +1,11 @@
 /** Opciones Ollama para no superar ~8 GB de RAM. */
 
-export const OLLAMA_URL = (process.env.OLLAMA_URL ?? "http://127.0.0.1:11434").replace(/\/$/, "");
+export function ollamaUrl(): string {
+  return (process.env.OLLAMA_URL ?? "http://127.0.0.1:11434").replace(/\/$/, "");
+}
+
+/** @deprecated Prefer ollamaUrl() para respetar cambios de entorno en runtime. */
+export const OLLAMA_URL = ollamaUrl();
 export const OLLAMA_CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL?.trim() || "deepseek-r1:1.5b";
 export const OLLAMA_VISION_MODEL = process.env.OLLAMA_VISION_MODEL?.trim() || "qwen2.5vl:3b";
 export const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL?.trim() || "nomic-embed-text";
@@ -26,7 +31,7 @@ export function withOllamaLimits<T extends Record<string, unknown>>(payload: T):
 
 export async function ollamaAvailable(signal?: AbortSignal): Promise<boolean> {
   try {
-    const response = await fetch(`${OLLAMA_URL}/api/tags`, {
+    const response = await fetch(`${ollamaUrl()}/api/tags`, {
       signal: signal ?? AbortSignal.timeout(2000),
       cache: "no-store",
     });
@@ -43,7 +48,7 @@ export async function ollamaChat(options: {
   signal?: AbortSignal;
   /** Por defecto fuerza español; usa "translate" solo en el oficio Traducir. */
   languageMode?: "spanish" | "translate";
-}): Promise<{ ok: boolean; text: string; thinking?: string; model: string }> {
+}): Promise<{ ok: boolean; text: string; thinking?: string; model: string; error?: string }> {
   const model = options.model ?? OLLAMA_CHAT_MODEL;
   const languageLine =
     options.languageMode === "translate"
@@ -55,7 +60,7 @@ export async function ollamaChat(options: {
     { role: "user", content: options.prompt },
   ];
   try {
-    const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+    const response = await fetch(`${ollamaUrl()}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(
@@ -68,21 +73,33 @@ export async function ollamaChat(options: {
       signal: options.signal ?? AbortSignal.timeout(120_000),
       cache: "no-store",
     });
-    if (!response.ok) return { ok: false, text: "", model };
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      const error = `Ollama HTTP ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`;
+      console.error("[taller/ollama]", error);
+      return { ok: false, text: "", model, error };
+    }
     const json = (await response.json()) as {
       message?: { content?: string; thinking?: string };
       response?: string;
     };
     const raw = (json.message?.content || json.response || "").trim();
+    if (!raw) {
+      const error = "Ollama devolvió una respuesta vacía";
+      console.error("[taller/ollama]", error, { model });
+      return { ok: false, text: "", model, error };
+    }
     const split = splitThink(raw);
     return {
-      ok: Boolean(raw),
+      ok: true,
       text: split.content,
       thinking: json.message?.thinking || split.thinking,
       model,
     };
-  } catch {
-    return { ok: false, text: "", model };
+  } catch (caught) {
+    const error = caught instanceof Error ? caught.message : String(caught);
+    console.error("[taller/ollama] fallo al llamar /api/chat:", error);
+    return { ok: false, text: "", model, error };
   }
 }
 
