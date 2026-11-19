@@ -160,12 +160,17 @@ export function systemPrompt(
 ): string {
   const languageLine =
     languageMode === "translate"
-      ? "Modo Traducir: traduce el texto entre español e inglés según las reglas del oficio. Las acotaciones breves al usuario pueden ir en español."
-      : "OBLIGATORIO: responde siempre en español (Colombia). Explicaciones, pasos, títulos y mensajes al usuario en español. No escribas la respuesta en inglés salvo citas textuales, código, nombres propios, URLs o fórmulas.";
-  const lines = [activity.system, languageLine];
+      ? "Modo Traducir: la ÚNICA excepción al español. Traduce el texto entre español e inglés según lo pedido."
+      : "Responde SIEMPRE en español natural y correcto, sin importar si las fuentes o documentos están en inglés u otro idioma. La ÚNICA excepción es cuando el usuario pida explícitamente traducir un texto.";
+  const lines = [
+    activity.system,
+    languageLine,
+    "Redacta limpio y estructurado (subtítulos en negrita, viñetas, párrafos cortos). No vuelques fragmentos crudos de RAG ni encabezados tipo «Según la memoria local y la web».",
+    "Si el historial pide «más corto», «más informativo» o «más natural», obedece ese estilo de inmediato.",
+  ];
   if (now) lines.push(`Fecha en America/Bogota: ${bogotaDate(now)}.`);
   if (notes) {
-    lines.push("", "Notas del taller, calculadas en el servidor. Úsalas y no las contradigas:", notes);
+    lines.push("", "Contexto interno (no lo copies literal; úsalo para redactar):", notes);
   }
   return lines.join("\n");
 }

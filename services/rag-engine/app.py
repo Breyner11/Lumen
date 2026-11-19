@@ -27,6 +27,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from audio_transcribe import transcribe_audio_bytes
+from documents_extract import extract_document
 from images import (
     ensure_image_tables,
     find_similar_math,
@@ -540,10 +541,37 @@ async def audio_transcribe(file: UploadFile = File(...)) -> dict[str, Any]:
     return result
 
 
+@app.post("/documents/extract")
+async def documents_extract(
+    file: UploadFile = File(...),
+    learn: bool = Form(default=True),
+) -> dict[str, Any]:
+    raw = await file.read()
+    extracted = extract_document(raw, file.filename or "documento.txt")
+    if not extracted.get("ok"):
+        raise HTTPException(status_code=422, detail=extracted.get("error") or "No extraje el documento.")
+    indexed = None
+    if learn:
+        doc_id = f"doc-{int(time.time())}-{abs(hash(file.filename or 'x')) % 10_000}"
+        indexed = await index_learning_doc(
+            {
+                "id": doc_id,
+                "title": extracted["title"],
+                "text": extracted["text"],
+                "source": f"adjunto:{file.filename or 'documento'}",
+            }
+        )
+    return {
+        **extracted,
+        "indexed": bool(indexed),
+        "document_id": (indexed or {}).get("id"),
+    }
+
+
 def ddg_text(query: str, max_results: int) -> list[dict[str, str]]:
     results: list[dict[str, str]] = []
     with DDGS() as ddgs:
-        for item in ddgs.text(query, max_results=max_results):
+        for item in ddgs.text(query, max_results=max_results, region="es-es"):
             results.append(
                 {
                     "title": item.get("title") or "Resultado",

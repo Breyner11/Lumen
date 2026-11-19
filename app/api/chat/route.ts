@@ -105,47 +105,23 @@ function ollamaStream(request: ChatRequest, signal: AbortSignal): ReadableStream
   return new ReadableStream({
     async start(controller) {
       try {
-        const { OLLAMA_CHAT_MODEL, OLLAMA_URL, splitThink, withOllamaLimits } = await import("@/lib/ollama");
+        const { OLLAMA_CHAT_MODEL, splitThink } = await import("@/lib/ollama");
+        // composeConversation ya redacta con deepseek-r1:1.5b (contexto interno → respuesta limpia).
         const composed = await composeConversation({ ...request, now: new Date() });
-        // Si las herramientas ya resolvieron (math/emergency/etc.), sirve eso y deja que R1 solo razone si hace falta.
-        if (composed.answer && !request.thinking) {
-          for (const part of chunk(composed.answer, 80)) controller.enqueue(sse({ type: "content", text: part }));
-          controller.enqueue(sse({ type: "done", mode: "taller", model: OLLAMA_CHAT_MODEL, ragHits: composed.ragHits ?? 0 }));
-          controller.close();
-          return;
+        const split = splitThink(composed.answer || "");
+        if (split.thinking) controller.enqueue(sse({ type: "reasoning", text: split.thinking }));
+        for (const part of chunk(composed.answer || "No pude generar la respuesta.", 80)) {
+          controller.enqueue(sse({ type: "content", text: part }));
         }
-        const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(
-            withOllamaLimits({
-              model: OLLAMA_CHAT_MODEL,
-              stream: false,
-              messages: composed.messages.map((m) => ({ role: m.role, content: m.content })),
-            }),
-          ),
-          signal: AbortSignal.any([AbortSignal.timeout(120_000), signal]),
-          cache: "no-store",
-        });
-        if (!upstream.ok) {
-          // Fallback a herramientas locales.
-          for (const part of chunk(composed.answer || "No pude usar Ollama; usé las herramientas locales.", 80)) {
-            controller.enqueue(sse({ type: "content", text: part }));
-          }
-          controller.enqueue(sse({ type: "done", mode: "taller", model: OLLAMA_CHAT_MODEL }));
-          controller.close();
-          return;
-        }
-        const json = (await upstream.json()) as { message?: { content?: string; thinking?: string } };
-        const raw = (json.message?.content || "").trim() || composed.answer;
-        const split = splitThink(raw);
-        const thinking = json.message?.thinking || split.thinking;
-        if (thinking) controller.enqueue(sse({ type: "reasoning", text: thinking }));
-        const finalText = thinking && !split.content.includes("<think>")
-          ? `<think>${thinking}</think>\n\n${split.content || composed.answer}`
-          : split.content || composed.answer;
-        for (const part of chunk(finalText, 80)) controller.enqueue(sse({ type: "content", text: part }));
-        controller.enqueue(sse({ type: "done", mode: "taller", model: OLLAMA_CHAT_MODEL, ragHits: composed.ragHits ?? 0 }));
+        controller.enqueue(
+          sse({
+            type: "done",
+            mode: "taller",
+            model: OLLAMA_CHAT_MODEL,
+            ragHits: composed.ragHits ?? 0,
+            learnedFrom: composed.learnedFrom ?? null,
+          }),
+        );
         controller.close();
       } catch {
         if (signal.aborted) {

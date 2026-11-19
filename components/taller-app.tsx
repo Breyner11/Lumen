@@ -9,7 +9,6 @@ import {
   Clock3,
   Code2,
   History,
-  ImagePlus,
   Languages,
   Library,
   ListChecks,
@@ -23,9 +22,11 @@ import {
   Square,
   Trash2,
   Wifi,
+  X,
 } from "lucide-react";
 import { ACTIVITIES, ACTIVITY_MAP, MODEL_LABEL } from "@/lib/activities";
 import { syncLessonToEngine } from "@/lib/rag/sync-lesson";
+import { STYLE_QUICK_PROMPTS } from "@/lib/style";
 import { looksLikeMath, SPECIALTY_IDS } from "@/lib/tools/route";
 import { formatHistoryTime, pushHistory, sanitizeHistory, type HistoryEntry } from "@/lib/history";
 import {
@@ -118,8 +119,9 @@ export function TallerApp() {
   const [correctingIndex, setCorrectingIndex] = useState<number | null>(null);
   const [correctionDraft, setCorrectionDraft] = useState("");
   const [learnNote, setLearnNote] = useState("");
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
+  const attachInputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const current = ACTIVITY_MAP[activity];
@@ -420,11 +422,82 @@ export function TallerApp() {
     }
   }
 
+  function isImageFile(file: File): boolean {
+    return file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+  }
+
+  function isAudioFile(file: File): boolean {
+    return file.type.startsWith("audio/") || /\.(webm|wav|mp3|m4a|ogg)$/i.test(file.name);
+  }
+
+  async function processPendingAttachments(base: string): Promise<string | null> {
+    if (!pendingFiles.length) return base;
+    const files = [...pendingFiles];
+    const onlyImage = files.length === 1 && isImageFile(files[0]!) && !base;
+    if (onlyImage) {
+      setPendingFiles([]);
+      void solveImage(files[0]!);
+      return null;
+    }
+
+    const chunks: string[] = [];
+    for (const file of files) {
+      if (isImageFile(file)) {
+        const body = new FormData();
+        body.append("file", file, file.name);
+        const response = await fetch("/api/vision/solve", { method: "POST", body });
+        const json = (await response.json()) as { answer?: string; error?: string };
+        if (!response.ok || !json.answer) {
+          setError(json.error || `No pude leer la imagen ${file.name}`);
+          return null;
+        }
+        chunks.push(`Análisis de la imagen «${file.name}»:\n${json.answer}`);
+        continue;
+      }
+      if (isAudioFile(file)) {
+        const body = new FormData();
+        body.append("file", file, file.name);
+        const response = await fetch("/api/audio/transcribe", { method: "POST", body });
+        const json = (await response.json()) as { text?: string; error?: string };
+        if (!response.ok || !json.text) {
+          setError(json.error || `No pude transcribir ${file.name}`);
+          return null;
+        }
+        chunks.push(`Transcripción de «${file.name}»:\n${json.text}`);
+        continue;
+      }
+      const body = new FormData();
+      body.append("file", file, file.name);
+      const response = await fetch("/api/documents/extract", { method: "POST", body });
+      const json = (await response.json()) as {
+        text?: string;
+        title?: string;
+        indexed?: boolean;
+        error?: string;
+      };
+      if (!response.ok || !json.text) {
+        setError(json.error || `No pude leer ${file.name}`);
+        return null;
+      }
+      chunks.push(
+        [
+          `Documento adjunto «${json.title || file.name}»${json.indexed ? " (indexado en RAG)" : ""}:`,
+          json.text.slice(0, 12_000),
+        ].join("\n"),
+      );
+    }
+    setPendingFiles([]);
+    return [base, ...chunks].filter(Boolean).join("\n\n");
+  }
+
   async function send(text = draft) {
-    const content = text.trim();
-    if (!content || streaming) return;
+    if (streaming) return;
     setError("");
     setLearnNote("");
+    const prepared = await processPendingAttachments(text.trim());
+    if (prepared === null) return;
+    const content = prepared.trim();
+    if (!content) return;
 
     // Calcular / Preguntar (si parece cuenta): prefer SymPy engine.
     if (activity === "calcular" || (activity === "preguntar" && looksLikeMath(content))) {
@@ -793,6 +866,7 @@ export function TallerApp() {
                     setCorrectingIndex(null);
                     setCorrectionDraft("");
                   }}
+                  onStyle={(style) => void send(STYLE_QUICK_PROMPTS[style])}
                 />
               ))
             )}
@@ -806,6 +880,26 @@ export function TallerApp() {
             void send();
           }}
         >
+          {pendingFiles.length > 0 ? (
+            <div className="mx-auto mb-2 flex max-w-2xl flex-wrap gap-2">
+              {pendingFiles.map((file, index) => (
+                <span
+                  key={`${file.name}-${index}`}
+                  className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-xs"
+                >
+                  <span className="truncate">{file.name}</span>
+                  <button
+                    type="button"
+                    className="rounded-full p-0.5 hover:bg-background"
+                    aria-label={`Quitar ${file.name}`}
+                    onClick={() => setPendingFiles((current) => current.filter((_, i) => i !== index))}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
           <div className="mx-auto flex max-w-2xl items-end gap-2">
             <label className="sr-only" htmlFor="mensaje">
               Mensaje para {current.label}
@@ -826,58 +920,51 @@ export function TallerApp() {
               }}
             />
             <input
-              ref={imageInputRef}
+              ref={attachInputRef}
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.markdown,image/*,audio/*"
               className="hidden"
               onChange={(event) => {
-                const file = event.target.files?.[0];
+                const files = Array.from(event.target.files ?? []);
                 event.target.value = "";
-                if (file) void solveImage(file);
+                if (!files.length) return;
+                setPendingFiles((current) => [...current, ...files].slice(0, 6));
               }}
             />
-            <input
-              ref={audioInputRef}
-              type="file"
-              accept="audio/*,.webm,.wav,.mp3,.m4a,.ogg"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                if (file) void transcribeAudio(file);
-              }}
-            />
+            <input ref={audioInputRef} type="file" accept="audio/*,.webm,.wav,.mp3,.m4a,.ogg" className="hidden" />
             <Button
               type="button"
               variant="outline"
               size="icon-lg"
-              aria-label="Grabar o subir audio"
+              aria-label="Adjuntar documento, imagen o audio"
+              disabled={streaming}
+              onClick={() => attachInputRef.current?.click()}
+            >
+              <Plus />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-lg"
+              aria-label="Grabar audio"
               disabled={streaming}
               onClick={() => void recordAndTranscribe()}
             >
               <Mic />
             </Button>
-            {(activity === "preguntar" ||
-              activity === "calcular" ||
-              activity === "investigar" ||
-              activity === "estudiar") && (
-              <Button
-                type="button"
-                variant="outline"
-                size="icon-lg"
-                aria-label="Subir imagen de un problema o apunte"
-                disabled={streaming}
-                onClick={() => imageInputRef.current?.click()}
-              >
-                <ImagePlus />
-              </Button>
-            )}
             {streaming ? (
               <Button type="button" variant="outline" size="icon-lg" className="brand-mark" aria-label="Detener" onClick={() => abortRef.current?.abort()}>
                 <Square />
               </Button>
             ) : (
-              <Button type="submit" size="icon-lg" className="brand-mark" aria-label="Enviar" disabled={!draft.trim()}>
+              <Button
+                type="submit"
+                size="icon-lg"
+                className="brand-mark"
+                aria-label="Enviar"
+                disabled={!draft.trim() && pendingFiles.length === 0}
+              >
                 <ArrowUp />
               </Button>
             )}
@@ -1287,6 +1374,7 @@ function MessageBubble({
   onCorrectionChange,
   onCorrectionSubmit,
   onCorrectionCancel,
+  onStyle,
 }: {
   message: StoredMessage;
   pending: boolean;
@@ -1299,6 +1387,7 @@ function MessageBubble({
   onCorrectionChange?: (value: string) => void;
   onCorrectionSubmit?: () => void;
   onCorrectionCancel?: () => void;
+  onStyle?: (style: "corto" | "informativo" | "natural") => void;
 }) {
   const mine = message.role === "user";
   return (
@@ -1332,7 +1421,18 @@ function MessageBubble({
           <MarkdownView text={message.content || (pending ? "" : "…")} />
         )}
         {feedbackEnabled && (
-          <div className="mt-3 border-t border-border/70 pt-2">
+          <div className="mt-3 space-y-2 border-t border-border/70 pt-2">
+            <div className="flex flex-wrap gap-1.5">
+              <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground" onClick={() => onStyle?.("corto")}>
+                Más corto
+              </Button>
+              <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground" onClick={() => onStyle?.("informativo")}>
+                Más informativo
+              </Button>
+              <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground" onClick={() => onStyle?.("natural")}>
+                Más natural
+              </Button>
+            </div>
             {correcting ? (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">¿Cuál era la respuesta correcta? La guardo para la próxima vez.</p>

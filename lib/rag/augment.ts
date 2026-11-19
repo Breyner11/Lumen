@@ -1,5 +1,4 @@
 import {
-  appendCitations,
   sourcesFromHits,
   type CitationImage,
   type CitationSource,
@@ -30,50 +29,33 @@ export function formatRagContext(
     ].join("\n");
   });
 
+  // Solo para el modelo (contexto interno), nunca para volcar al usuario.
   const promptBlock = [
-    "Contexto recuperado por RAG. Prioriza estos fragmentos y cita su título/fuente:",
+    "Contexto recuperado. Úsalo para redactar; no lo copies literal:",
     "",
     ...lines,
   ].join("\n");
 
-  // Respuesta visible: resumen corto, sin volcar fragmentos crudos.
   const answerBlock = hits
-    .slice(0, 3)
+    .slice(0, 5)
     .map((hit) => {
-      const snippet = hit.chunk.text.replace(/\s+/g, " ").trim().slice(0, 220);
-      return `- **${hit.chunk.title}**: ${snippet}${snippet.length >= 220 ? "…" : ""}`;
+      const snippet = hit.chunk.text.replace(/\s+/g, " ").trim().slice(0, 280);
+      return `- ${hit.chunk.title}: ${snippet}`;
     })
     .join("\n");
 
   return { hits, promptBlock, answerBlock, sources, images: images.slice(0, 3) };
 }
 
+/** @deprecated Prefer polishAnswer; se mantiene por compatibilidad mínima. */
 export function augmentAnswerWithRag(answer: string, context: RagContext): string {
   if (!context.hits.length && !context.images.length && !context.sources.length) return answer;
-  const clean = answer
-    .replace(/\*\*Contexto RAG usado\*\*[\s\S]*$/m, "")
-    .replace(/\*\*Fuentes consultadas\*\*[\s\S]*$/m, "")
-    .trim();
-  const withSummary =
-    context.answerBlock && !clean.includes(context.answerBlock.slice(0, 40))
-      ? [clean, "", "**En resumen (memoria / web)**", "", context.answerBlock].join("\n")
-      : clean;
-  return appendCitations(withSummary, {
-    images: context.images,
-    sources: context.sources.length
-      ? context.sources
-      : sourcesFromHits(
-          context.hits.map((hit) => ({
-            title: hit.chunk.title,
-            source: hit.chunk.source,
-          })),
-        ),
-  });
+  return answer.trim();
 }
 
 export function citationPayload(
   sources: CitationSource[],
   images: CitationImage[] = [],
-): string {
-  return appendCitations("", { sources, images }).trim();
+): { sources: CitationSource[]; images: CitationImage[] } {
+  return { sources, images };
 }

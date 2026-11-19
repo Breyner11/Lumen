@@ -33,7 +33,7 @@ def internet_ok(timeout: float = 3.0) -> bool:
 def search_snippets(query: str, max_results: int = 4) -> list[dict[str, str]]:
     results: list[dict[str, str]] = []
     with DDGS() as ddgs:
-        for item in ddgs.text(query, max_results=max_results):
+        for item in ddgs.text(query, max_results=max_results, region="es-es"):
             results.append(
                 {
                     "title": item.get("title") or "Resultado",
@@ -63,7 +63,7 @@ def build_learning_document(topic: str, hits: list[dict[str, str]]) -> dict[str,
     doc_id = f"learn-{uuid.uuid4().hex[:12]}"
     return {
         "id": doc_id,
-        "title": f"Web · {topic[:80]}",
+        "title": f"Aprendizaje: {topic[:80]}",
         "text": text,
         "source": f"aprendizaje-web:{now.date().isoformat()}",
         "topic": topic,

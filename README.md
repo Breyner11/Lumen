@@ -24,9 +24,16 @@ Si una respuesta falla, marca **Mal** y escribe la correcta, o envía «está ma
 | Cálculo exacto | **SymPy** (+ Qwen2.5-Math opcional) | Derivadas, integrales y ecuaciones sin alucinaciones numéricas |
 | Memoria de imágenes | **SQLite + caption/CLIP** | Guarda fotos y las recupera por texto (“gráfica de parábola”) |
 
+### Adjuntos, imágenes web y estilo
+
+- Botón **+**: adjunta `.pdf`, `.docx`, `.xlsx`/`.xls`, `.csv`, `.txt`/`.md`, imágenes o audio. Verás el nombre del archivo antes de enviar; el motor extrae texto (`/documents/extract`) y lo indexa en RAG.
+- Con internet, DuckDuckGo (`region=es-es`) aporta resultados e **1–3 imágenes**; la UI muestra la galería arriba y un recuadro **Fuentes** al final.
+- Debajo de cada respuesta: **Más corto**, **Más informativo**, **Más natural**. DeepSeek R1 redacta limpio (sin volcar RAG crudo) y obedece el estilo del historial reciente.
+- Idioma: **siempre español**, salvo el oficio **Traducir**.
+
 ### Flujo imagen → solución
 
-1. Subes una foto en **Calcular** (botón de imagen).
+1. Adjunta una foto con **+** (o envíala sola).
 2. Qwen2.5-VL (Ollama) la lee y saca LaTeX.
 3. Si hace falta, DuckDuckGo aporta contexto teórico.
 4. **SymPy** calcula el resultado exacto y muestra pasos + código.
