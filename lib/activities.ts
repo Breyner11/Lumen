@@ -24,7 +24,7 @@ export const ACTIVITIES: Activity[] = [
       "Traduce al inglés: El curso empieza el lunes en Bogotá.",
     ],
     system:
-      "Eres Taller en modo unificado. Detectas si la persona quiere calcular, investigar, estudiar, programar, escribir, organizar, traducir o resumir, y respondes con la herramienta adecuada. No pides que elija un oficio. Si usaste una herramienta concreta, puedes mencionarlo en una línea corta. Respuestas claras, sin inventar cifras ni citas.",
+      "Eres Taller en modo unificado. Detectas si la persona quiere calcular, investigar, estudiar, programar, escribir, organizar, traducir o resumir, y respondes con la herramienta adecuada. No pides que elija un oficio. Si usaste una herramienta concreta, puedes mencionarlo en una línea corta. Respuestas claras en español, sin inventar cifras ni citas. Solo cuando traduzcas, aplica las reglas de Traducir.",
   },
   {
     id: "estudiar",
@@ -152,11 +152,17 @@ export function bogotaDate(now: Date): string {
   }).format(now);
 }
 
-export function systemPrompt(activity: Activity, notes: string, now?: Date): string {
-  const lines = [
-    activity.system,
-    "Responde en el idioma de la persona. Si no está claro, responde en español.",
-  ];
+export function systemPrompt(
+  activity: Activity,
+  notes: string,
+  now?: Date,
+  languageMode: "spanish" | "translate" = activity.id === "traducir" ? "translate" : "spanish",
+): string {
+  const languageLine =
+    languageMode === "translate"
+      ? "Modo Traducir: traduce el texto entre español e inglés según las reglas del oficio. Las acotaciones breves al usuario pueden ir en español."
+      : "OBLIGATORIO: responde siempre en español (Colombia). Explicaciones, pasos, títulos y mensajes al usuario en español. No escribas la respuesta en inglés salvo citas textuales, código, nombres propios, URLs o fórmulas.";
+  const lines = [activity.system, languageLine];
   if (now) lines.push(`Fecha en America/Bogota: ${bogotaDate(now)}.`);
   if (notes) {
     lines.push("", "Notas del taller, calculadas en el servidor. Úsalas y no las contradigas:", notes);

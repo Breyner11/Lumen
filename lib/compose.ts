@@ -53,6 +53,8 @@ export async function composeConversation(options: {
   const documents = options.documents ?? [];
   const routedIntent: IntentId | null =
     options.activity === "preguntar" ? detectIntent(latest) : null;
+  const languageMode: "spanish" | "translate" =
+    options.activity === "traducir" || routedIntent === "traducir" ? "translate" : "spanish";
   const effectiveActivity: ActivityId =
     routedIntent && isSpecialtyIntent(routedIntent) ? routedIntent : options.activity;
 
@@ -74,6 +76,7 @@ export async function composeConversation(options: {
     return wrap(options, notes, latest, answer, {
       learnedFrom: learned.id,
       badge: routedIntent ? intentLabel(routedIntent) : undefined,
+      languageMode,
     });
   }
 
@@ -81,17 +84,17 @@ export async function composeConversation(options: {
   if (options.activity === "preguntar" && routedIntent) {
     if (routedIntent === "emergencia") {
       const tool = await handleEmergency(latest);
-      return wrap(options, tool.notes, latest, tool.answer, { ragHits: 1 });
+      return wrap(options, tool.notes, latest, tool.answer, { ragHits: 1, languageMode });
     }
     if (routedIntent === "cotidiano") {
       const tool = await handleDailyLife(latest);
       void engineLearnFromQuery(latest);
-      return wrap(options, tool.notes, latest, tool.answer, { ragHits: 1 });
+      return wrap(options, tool.notes, latest, tool.answer, { ragHits: 1, languageMode });
     }
     if (routedIntent === "proyecto") {
       const tool = await handleProject(latest);
       void engineLearnFromQuery(latest);
-      return wrap(options, tool.notes, latest, tool.answer, { ragHits: 1 });
+      return wrap(options, tool.notes, latest, tool.answer, { ragHits: 1, languageMode });
     }
     if (routedIntent === "enlace") {
       const url = extractUrls(latest)[0];
@@ -99,7 +102,10 @@ export async function composeConversation(options: {
       const answer = analyzed
         ? formatLinkAnswer(analyzed)
         : "No pude analizar el enlace. Arranca el motor Python.";
-      return wrap(options, analyzed?.text?.slice(0, 1000) || "", latest, answer, { ragHits: 1 });
+      return wrap(options, analyzed?.text?.slice(0, 1000) || "", latest, answer, {
+        ragHits: 1,
+        languageMode,
+      });
     }
   }
 
@@ -113,6 +119,7 @@ export async function composeConversation(options: {
         tool.notes.includes("Contexto recuperado por RAG") || tool.answer.includes("Contexto RAG")
           ? 1
           : 0,
+      languageMode,
     });
   }
 
@@ -133,7 +140,7 @@ export async function composeConversation(options: {
   const answer = rag.hits.length ? augmentAnswerWithRag(tool.answer, rag) : tool.answer;
   if (rag.hits.length) void engineLearnFromQuery(latest);
 
-  return wrap(options, notes, latest, answer, { ragHits: rag.hits.length });
+  return wrap(options, notes, latest, answer, { ragHits: rag.hits.length, languageMode });
 }
 
 function wrap(
@@ -148,15 +155,22 @@ function wrap(
   notes: string,
   _latest: string,
   answer: string,
-  meta?: { learnedFrom?: string; ragHits?: number; badge?: string },
+  meta?: {
+    learnedFrom?: string;
+    ragHits?: number;
+    badge?: string;
+    languageMode?: "spanish" | "translate";
+  },
 ) {
   const finalAnswer = meta?.badge && !answer.includes("Herramienta:")
     ? `_Herramienta: ${meta.badge}_\n\n${answer}`
     : answer;
+  const languageMode =
+    meta?.languageMode ?? (options.activity === "traducir" ? "translate" : "spanish");
   const messages: RecipeMessage[] = [
     {
       role: "system",
-      content: systemPrompt(ACTIVITY_MAP[options.activity], notes, options.now),
+      content: systemPrompt(ACTIVITY_MAP[options.activity], notes, options.now, languageMode),
     },
     ...options.messages,
   ];

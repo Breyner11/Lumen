@@ -10,10 +10,11 @@ export function composeRecipePreview(options: {
   thinking: boolean;
   messages: ChatTurn[];
 }): string {
+  const languageMode = options.activity === "traducir" ? "translate" : "spanish";
   const messages = [
     {
       role: "system" as const,
-      content: systemPrompt(ACTIVITY_MAP[options.activity], "", new Date(0)),
+      content: systemPrompt(ACTIVITY_MAP[options.activity], "", new Date(0), languageMode),
     },
     ...options.messages,
   ];

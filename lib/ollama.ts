@@ -41,10 +41,17 @@ export async function ollamaChat(options: {
   system?: string;
   model?: string;
   signal?: AbortSignal;
+  /** Por defecto fuerza español; usa "translate" solo en el oficio Traducir. */
+  languageMode?: "spanish" | "translate";
 }): Promise<{ ok: boolean; text: string; thinking?: string; model: string }> {
   const model = options.model ?? OLLAMA_CHAT_MODEL;
+  const languageLine =
+    options.languageMode === "translate"
+      ? "Modo traducción: traduce según lo pedido entre español e inglés."
+      : "OBLIGATORIO: responde siempre en español.";
+  const system = [options.system, languageLine].filter(Boolean).join("\n");
   const messages = [
-    ...(options.system ? [{ role: "system", content: options.system }] : []),
+    ...(system ? [{ role: "system", content: system }] : []),
     { role: "user", content: options.prompt },
   ];
   try {
