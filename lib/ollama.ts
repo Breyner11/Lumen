@@ -15,11 +15,11 @@ export const OLLAMA_CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL?.trim() || "deeps
 export const OLLAMA_VISION_MODEL = process.env.OLLAMA_VISION_MODEL?.trim() || "qwen2.5vl:3b";
 export const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL?.trim() || "nomic-embed-text";
 
-/** Opciones rápidas: menos contexto y tope de tokens para no saturar el timeout. */
+/** Opciones base: equilibrio entre detalle y tiempo de respuesta. */
 export const OLLAMA_OPTIONS = {
-  num_ctx: 2048,
+  num_ctx: 3072,
   num_thread: 4,
-  num_predict: 450,
+  num_predict: 700,
 } as const;
 
 export function withOllamaLimits<T extends Record<string, unknown>>(
@@ -133,6 +133,8 @@ export async function ollamaChat(options: {
   timeoutMs?: number;
   /** Desactiva el bloque thinking de R1 cuando el runtime lo permite. */
   think?: boolean;
+  numPredict?: number;
+  numCtx?: number;
 }): Promise<{ ok: boolean; text: string; thinking?: string; model: string; error?: string }> {
   const model = options.model ?? OLLAMA_CHAT_MODEL;
   const url = ollamaUrl();
@@ -166,6 +168,10 @@ export async function ollamaChat(options: {
             // deepseek-r1: acorta el razonamiento para no agotar el timeout.
             think: options.think ?? false,
             messages,
+            options: {
+              ...(typeof options.numPredict === "number" ? { num_predict: options.numPredict } : {}),
+              ...(typeof options.numCtx === "number" ? { num_ctx: options.numCtx } : {}),
+            },
           },
           keepAlive,
         ),

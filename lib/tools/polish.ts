@@ -11,8 +11,6 @@ import type { ChatTurn } from "@/lib/types";
 export const OLLAMA_WARMUP_MESSAGE =
   "Iniciando modelo DeepSeek en Ollama, intenta de nuevo en unos segundos";
 
-const MAX_INTERNAL_CHARS = 1600;
-
 export type PolishResult = {
   text: string;
   thinking?: string;
@@ -35,6 +33,8 @@ export async function polishAnswer(options: {
   images?: CitationImage[];
   sources?: CitationSource[];
   languageMode?: "spanish" | "translate";
+  /** research = respuesta más completa; chat = equilibrada; corto vía style. */
+  mode?: "research" | "chat";
 }): Promise<PolishResult> {
   const { images: existingImages, sources: existingSources, content: seed } = stripCitationBlocks(
     options.context,
@@ -42,6 +42,7 @@ export async function polishAnswer(options: {
   const images = (options.images?.length ? options.images : existingImages).slice(0, 3);
   const sources = (options.sources?.length ? options.sources : existingSources).slice(0, 12);
   const style = options.style ?? detectAnswerStyle(options.messages ?? []);
+  const mode = options.mode ?? "chat";
 
   if (options.languageMode === "translate") {
     return {
@@ -52,27 +53,40 @@ export async function polishAnswer(options: {
     };
   }
 
-  const internal = stripRawContextMarkers(seed).slice(0, MAX_INTERNAL_CHARS);
+  const maxChars = mode === "research" ? 3200 : style === "corto" ? 1400 : 2400;
+  const numPredict = style === "corto" ? 280 : mode === "research" || style === "informativo" ? 900 : 650;
+  const internal = stripRawContextMarkers(seed).slice(0, maxChars);
+
+  const lengthRule =
+    style === "corto"
+      ? "Sé breve: 2–5 viñetas o hasta ~100 palabras."
+      : mode === "research" || style === "informativo"
+        ? "Sé informativo: 3–6 subtítulos o secciones, con párrafos cortos y viñetas. Entre 250 y 450 palabras si el material lo permite."
+        : "Respuesta clara y útil: 150–280 palabras, con subtítulos o viñetas si ayudan.";
+
   const drafted = await ollamaChat({
     languageMode: "spanish",
     keepAlive: "5m",
     timeoutMs: 180_000,
     think: false,
+    numPredict,
+    numCtx: mode === "research" ? 3072 : 2048,
     system: [
       "Eres Taller, un asistente todoterreno.",
       "Responde SIEMPRE en español natural y correcto.",
-      "Sé breve: máximo 120-180 palabras, con subtítulos en negrita y viñetas si ayudan.",
-      "No copies fragmentos crudos ni encabezados de recuperación.",
-      "No listes scores ni bloques [1] [2].",
-      styleInstruction(style === "informativo" ? "informativo" : style === "corto" ? "corto" : "default"),
+      lengthRule,
+      "Usa solo hechos de las notas internas. Si faltan datos, dilo; no inventes razas, cifras ni listas ficticias.",
+      "No copies encabezados de recuperación ni bloques [1] [2].",
+      "Estructura con **subtítulos** y viñetas cuando aporte claridad.",
+      styleInstruction(style),
     ].join("\n"),
     prompt: [
-      `Pregunta:\n${options.question}`,
+      `Pregunta del usuario:\n${options.question}`,
       "",
-      "Notas internas (úsalas, no las copies):",
+      "Borrador / notas internas (mejora la redacción; no inventes fuera de esto):",
       internal || "(sin notas)",
       "",
-      "Respuesta final breve:",
+      style === "corto" ? "Entrega la versión corta:" : "Entrega la respuesta final bien estructurada:",
     ].join("\n"),
   });
 
@@ -82,9 +96,8 @@ export async function polishAnswer(options: {
       drafted.error || "respuesta vacía",
       { model: drafted.model },
     );
-    // Solo usamos resumen local si hay viñetas útiles (answerBlock), no texto de recuperación cruda.
     const fallback = draftFromInternal(options.question, internal);
-    if (fallback && /^- /m.test(internal)) {
+    if (fallback && (internal.includes("**") || /^- /m.test(internal))) {
       return {
         text: fallback,
         images,
@@ -92,6 +105,10 @@ export async function polishAnswer(options: {
         ok: false,
         error: drafted.error,
       };
+    }
+    // Si el contexto ya es un borrador estructurado, úsalo tal cual.
+    if (internal.includes("**") && internal.length > 200) {
+      return { text: internal, images, sources, ok: false, error: drafted.error };
     }
     return {
       text: formatOllamaErrorForUser(drafted.error, drafted.model),
@@ -114,23 +131,21 @@ export async function polishAnswer(options: {
 /** Resume limpio a partir del material recuperado si Ollama falla/timeout. */
 export function draftFromInternal(question: string, context: string): string {
   const clean = stripRawContextMarkers(context);
-  if (!clean || looksLikeRawRetrieval(clean) && !/- /.test(clean)) {
-    // Intenta sacar viñetas o frases útiles.
-  }
+  if (clean.includes("**") && clean.length > 160) return clean;
   const bullets = clean
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line && !/^\s*\[\d+\]/.test(line) && !/score\s+\d/i.test(line))
     .map((line) => line.replace(/^\s*[-*]\s*/, ""))
     .filter((line) => line.length > 20)
-    .slice(0, 5);
+    .slice(0, 8);
   if (!bullets.length) return "";
   return [
     `**${question}**`,
     "",
-    ...bullets.map((line) => (line.startsWith("-") ? line : `- ${line}`)),
+    "**Qué dicen las fuentes**",
     "",
-    "_Resumen a partir de las fuentes (el modelo local tardó demasiado)._",
+    ...bullets.map((line) => (line.startsWith("-") ? line : `- ${line}`)),
   ].join("\n");
 }
 
@@ -146,13 +161,4 @@ function stripRawContextMarkers(text: string): string {
     )
     .join("\n")
     .trim();
-}
-
-function looksLikeRawRetrieval(text: string): boolean {
-  return (
-    /Contexto recuperado|Material interno para redactar/i.test(text) ||
-    /según la memoria local y la web/i.test(text) ||
-    /^\s*\[\d+\]\s+.+\(score\s+\d/m.test(text) ||
-    /^\s*\[\d+\]\s+Aprendizaje\b/m.test(text)
-  );
 }

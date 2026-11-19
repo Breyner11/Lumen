@@ -21,11 +21,11 @@ export function formatRagContext(
     })),
   );
 
-  const lines = hits.slice(0, 4).map((hit, index) => {
+  const lines = hits.slice(0, 6).map((hit, index) => {
     const source = hit.chunk.source ? ` · ${hit.chunk.source}` : "";
     return [
       `[${index + 1}] ${hit.chunk.title}${source}`,
-      hit.chunk.text.slice(0, 220),
+      hit.chunk.text.slice(0, 320),
     ].join("\n");
   });
 
@@ -33,9 +33,9 @@ export function formatRagContext(
   const promptBlock = ["Material interno para redactar:", "", ...lines].join("\n");
 
   const answerBlock = hits
-    .slice(0, 4)
+    .slice(0, 6)
     .map((hit) => {
-      const snippet = hit.chunk.text.replace(/\s+/g, " ").trim().slice(0, 180);
+      const snippet = hit.chunk.text.replace(/\s+/g, " ").trim().slice(0, 280);
       return `- ${hit.chunk.title}: ${snippet}`;
     })
     .join("\n");

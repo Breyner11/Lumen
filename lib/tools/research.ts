@@ -1,7 +1,8 @@
 import { sourcesFromHits, type CitationImage, type CitationSource } from "@/lib/rag/citations";
 import { runRagPipeline } from "@/lib/rag/pipeline";
-import type { RagDocument } from "@/lib/rag/types";
+import type { RagDocument, RagHit } from "@/lib/rag/types";
 import type { Lesson } from "@/lib/lessons";
+import { detectAnswerStyle } from "@/lib/style";
 import { polishAnswer } from "@/lib/tools/polish";
 import type { ChatTurn } from "@/lib/types";
 
@@ -62,14 +63,6 @@ export async function researchBrief(
     includeLiveSources: true,
   });
 
-  // Solo para Ollama: nunca se muestra al usuario.
-  const internal = [
-    known ? `Dato del taller — ${known.title}: ${known.body}` : "",
-    rag.promptBlock || rag.answerBlock,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-
   const sources =
     rag.sources.length > 0
       ? rag.sources
@@ -80,7 +73,8 @@ export async function researchBrief(
           })),
         );
 
-  if (!internal && !rag.images.length) {
+  const draft = buildResearchDraft(question, rag.hits, known);
+  if (!draft && !rag.images.length) {
     return {
       applicable: false,
       answer: [
@@ -94,58 +88,83 @@ export async function researchBrief(
     };
   }
 
-  // Preferimos answerBlock (viñetas cortas) + un poco de promptBlock para no saturar R1.
-  const polishContext = [known ? `Dato del taller — ${known.title}: ${known.body}` : "", rag.answerBlock || rag.promptBlock]
-    .filter(Boolean)
-    .join("\n\n")
-    .slice(0, 1800);
+  const style = detectAnswerStyle(options?.messages ?? []);
+  const researchStyle = style === "corto" || style === "natural" ? style : "informativo";
 
   const polished = await polishAnswer({
     question,
-    context: polishContext || internal,
+    context: draft,
     messages: options?.messages,
+    style: researchStyle,
     images: rag.images,
     sources,
+    mode: "research",
   });
 
-  if (!polished.ok) {
-    if (known) {
-      return {
-        applicable: true,
-        answer: `**${known.title}**\n\n${known.body}`,
-        images: polished.images,
-        sources: polished.sources,
-        notes: "",
-      };
-    }
-    // Si hay fuentes/imágenes, no mostremos solo el error de timeout.
-    if (rag.answerBlock || rag.images.length || sources.length) {
-      const summary =
-        polished.text.includes("Tiempo de espera agotado") || polished.text.includes("No pude completar")
-          ? [
-              `**${question}**`,
-              "",
-              rag.answerBlock || "- Consulta las fuentes e imágenes asociadas.",
-              "",
-              "_Resumen a partir de las fuentes (Ollama tardó demasiado)._",
-            ].join("\n")
-          : polished.text;
-      return {
-        applicable: true,
-        answer: summary,
-        images: polished.images,
-        sources: polished.sources,
-        notes: "",
-      };
-    }
-  }
+  // Si R1 inventa poco o falla, preferimos el borrador estructurado con las fuentes reales.
+  const answer =
+    polished.ok && looksSubstantive(polished.text, researchStyle) ? polished.text : draft || polished.text;
 
   return {
     applicable: true,
-    answer: polished.text,
+    answer,
     thinking: polished.thinking,
     images: polished.images,
     sources: polished.sources,
     notes: "",
   };
+}
+
+/** Borrador informativo a partir de hits reales (evita alucinaciones del 1.5B). */
+export function buildResearchDraft(
+  question: string,
+  hits: RagHit[],
+  known?: { title: string; body: string },
+): string {
+  const sections: string[] = [`**${question}**`, ""];
+
+  if (known) {
+    sections.push(`**${known.title}**`, "", known.body, "");
+  }
+
+  const useful = hits
+    .map((hit) => ({
+      title: hit.chunk.title.replace(/\s+/g, " ").trim(),
+      text: hit.chunk.text.replace(/\s+/g, " ").trim().slice(0, 320),
+      source: hit.chunk.source,
+    }))
+    .filter((item) => item.text.length > 40)
+    .slice(0, 6);
+
+  if (useful.length) {
+    sections.push("**Qué dicen las fuentes**", "");
+    for (const item of useful) {
+      sections.push(`- **${item.title}:** ${item.text}`);
+    }
+    sections.push("");
+  }
+
+  if (!known && !useful.length) return "";
+
+  sections.push(
+    "**En resumen**",
+    "",
+    known
+      ? `Lo esencial: ${known.body.slice(0, 220)}`
+      : "Conviene contrastar los puntos anteriores con las fuentes enlazadas al final.",
+  );
+
+  return sections.join("\n");
+}
+
+function looksSubstantive(text: string, style: string): boolean {
+  const clean = text.replace(/_Herramienta:[^_\n]*_/g, "").trim();
+  const minChars = style === "corto" ? 120 : 380;
+  const minLines = style === "corto" ? 2 : 6;
+  if (clean.length < minChars) return false;
+  if (clean.split("\n").filter((line) => line.trim()).length < minLines) return false;
+  // Señales de basura del modelo pequeño.
+  if (/guerres|caminarones|guantes de la carrera|guanacos/i.test(clean)) return false;
+  if (/Respuesta:\s*$/m.test(clean) && clean.length < 200) return false;
+  return true;
 }

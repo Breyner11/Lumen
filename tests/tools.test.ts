@@ -84,8 +84,42 @@ test("rechaza una conversación que no termina en la persona", () => {
 
 test("investigar responde qué es la metodología de investigación", async () => {
   const result = await runActivity("investigar", "que es la metodologia de investigacion");
-  assert.match(result.answer, /conjunto de criterios|Metodología|RAG|Contexto RAG/i);
+  assert.match(result.answer, /conjunto de criterios|Metodología|RAG|Contexto RAG|fuentes/i);
   assert.doesNotMatch(result.answer, /^Subpreguntas para no responder/m);
+  assert.ok(result.answer.length > 200, "la respuesta de investigar debe ser informativa");
+});
+
+test("buildResearchDraft arma secciones con fuentes", async () => {
+  const { buildResearchDraft } = await import("../lib/tools/research");
+  const draft = buildResearchDraft(
+    "razas de perros pequeños",
+    [
+      {
+        score: 0.5,
+        chunk: {
+          id: "1",
+          documentId: "d1",
+          title: "Chihuahua",
+          text: "El chihuahua es una de las razas más pequeñas del mundo y suele pesar menos de tres kilos.",
+          index: 0,
+        },
+      },
+      {
+        score: 0.4,
+        chunk: {
+          id: "2",
+          documentId: "d2",
+          title: "Pomerania",
+          text: "El pomerania es un perro pequeño de compañía, de pelaje abundante y carácter alerta.",
+          index: 1,
+        },
+      },
+    ],
+  );
+  assert.match(draft, /Qué dicen las fuentes/);
+  assert.match(draft, /Chihuahua/);
+  assert.match(draft, /Pomerania/);
+  assert.doesNotMatch(draft, /guanaco|caballo/i);
 });
 
 test("investigar ubica la pirámide de Giza con RAG", async () => {
