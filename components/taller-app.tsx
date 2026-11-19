@@ -37,6 +37,14 @@ import {
 } from "@/lib/tools/assistant";
 import { looksLikeMath } from "@/lib/tools/route";
 import { EMPTY_USER_MEMORY, sanitizeUserMemory, type UserMemory } from "@/lib/user-memory";
+import { buildDayBrief } from "@/lib/tools/day-brief";
+import {
+  answerUnadCampusFaq,
+  looksLikeUnadCampus,
+  SEED_UNAD_KB,
+  sanitizeUnadKb,
+  type UnadKbArticle,
+} from "@/lib/tools/unad";
 import { formatHistoryTime } from "@/lib/history";
 import {
   createEmptySession,
@@ -108,7 +116,9 @@ export function TallerApp() {
   const [ollamaModel, setOllamaModel] = useState(DEFAULT_QUALITY_MODEL);
   const [userMemory, setUserMemory] = useState<UserMemory>(EMPTY_USER_MEMORY);
   const [tasks, setTasks] = useState<AssistantTask[]>([]);
+  const [unadKb, setUnadKb] = useState<UnadKbArticle[]>(SEED_UNAD_KB);
   const [pendingDestructive, setPendingDestructive] = useState<PendingDestructive | null>(null);
+  const [dayBrief, setDayBrief] = useState("");
   const [docTitle, setDocTitle] = useState("");
   const [docText, setDocText] = useState("");
   const [imageQuery, setImageQuery] = useState("");
@@ -171,6 +181,7 @@ export function TallerApp() {
       setOllamaModel(stored.ollamaModel || DEFAULT_QUALITY_MODEL);
       setUserMemory(stored.memory || EMPTY_USER_MEMORY);
       setTasks(stored.tasks || []);
+      setUnadKb(stored.unadKb || SEED_UNAD_KB);
       document.documentElement.dataset.skin = stored.skin;
     } else {
       const ensured = ensureSessions([createEmptySession()]);
@@ -180,6 +191,12 @@ export function TallerApp() {
       document.documentElement.dataset.skin = "brisa";
     }
     setReady(true);
+    setDayBrief(
+      buildDayBrief({
+        tasks: readStorage()?.tasks || [],
+        memory: readStorage()?.memory || EMPTY_USER_MEMORY,
+      }),
+    );
     void fetch("/api/ollama/models")
       .then(async (response) => {
         if (!response.ok) {
@@ -225,6 +242,7 @@ export function TallerApp() {
         ollamaModel,
         memory: userMemory,
         tasks,
+        unadKb,
       }),
     );
   }, [
@@ -240,6 +258,7 @@ export function TallerApp() {
     ollamaModel,
     userMemory,
     tasks,
+    unadKb,
     ready,
   ]);
 
@@ -694,6 +713,20 @@ export function TallerApp() {
       setDraft("");
       return;
     }
+    if (looksLikeUnadCampus(content)) {
+      const faq = answerUnadCampusFaq(content, unadKb);
+      updateActiveMessages((current) => [
+        ...current,
+        { role: "user", content },
+        {
+          role: "assistant",
+          content: `_Herramienta: Campus UNAD_\n\n${faq.answer}`,
+          mode: "taller",
+        },
+      ]);
+      setDraft("");
+      return;
+    }
 
     const historyTurns = [...thread, { role: "user" as const, content }];
     const placeholder: StoredMessage = { role: "assistant", content: "", reasoning: "", mode: "taller" };
@@ -1076,18 +1109,30 @@ export function TallerApp() {
         <div ref={scrollerRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-5 md:px-6">
           <div className="mx-auto flex max-w-2xl flex-col gap-4">
             {thread.length === 0 ? (
-              <WelcomeState
-                starters={current.starters}
-                recent={previousChats.filter((session) => session.id !== activeSessionId && session.messages.length > 0).slice(0, 3)}
-                clock={clock}
-                draft={draft}
-                onDraftChange={setDraft}
-                onSubmit={() => void send()}
-                onPick={(starter) => void send(starter)}
-                onOpenChat={openChat}
-                theme={theme}
-                onToggleTheme={toggleTheme}
-              />
+              <>
+                {dayBrief ? (
+                  <div className="mb-2 rounded-2xl border border-border/80 bg-card/70 px-4 py-3 text-sm leading-6">
+                    <MarkdownView text={dayBrief} />
+                  </div>
+                ) : null}
+                <WelcomeState
+                  starters={[
+                    ...current.starters.slice(0, 2),
+                    "Ayúdame a estudiar con quiz y tarjetas: fotosíntesis",
+                    "Cómo recupero la contraseña del campus UNAD",
+                    "Verifica esta noticia: ...",
+                  ]}
+                  recent={previousChats.filter((session) => session.id !== activeSessionId && session.messages.length > 0).slice(0, 3)}
+                  clock={clock}
+                  draft={draft}
+                  onDraftChange={setDraft}
+                  onSubmit={() => void send()}
+                  onPick={(starter) => void send(starter)}
+                  onOpenChat={openChat}
+                  theme={theme}
+                  onToggleTheme={toggleTheme}
+                />
+              </>
             ) : (
               thread.map((message, index) => (
                 <MessageBubble
@@ -1450,6 +1495,8 @@ export function TallerApp() {
             window.setTimeout(() => setLearnNote(""), 4000);
           });
         }}
+        unadKb={unadKb}
+        onUnadKbChange={setUnadKb}
       />
     </div>
   );
@@ -1909,6 +1956,7 @@ function readStorage(): {
   ollamaModel?: string;
   memory?: UserMemory;
   tasks?: AssistantTask[];
+  unadKb?: UnadKbArticle[];
 } | null {
   try {
     const raw =
@@ -1930,6 +1978,7 @@ function readStorage(): {
       ollamaModel?: string;
       memory?: unknown;
       tasks?: unknown;
+      unadKb?: unknown;
     };
     if (parsed.model !== "flash" && parsed.model !== "pro") return null;
     if (parsed.effort !== "low" && parsed.effort !== "high" && parsed.effort !== "max") return null;
@@ -1955,6 +2004,7 @@ function readStorage(): {
       ollamaModel: typeof parsed.ollamaModel === "string" ? parsed.ollamaModel : undefined,
       memory: sanitizeUserMemory(parsed.memory),
       tasks: sanitizeTasks(parsed.tasks),
+      unadKb: sanitizeUnadKb(parsed.unadKb),
     };
   } catch {
     return null;

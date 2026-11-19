@@ -17,6 +17,21 @@ import { polishAnswer } from "@/lib/tools/polish";
 import { researchBrief } from "@/lib/tools/research";
 import { detectIntent, intentLabel, isSpecialtyIntent, type IntentId } from "@/lib/tools/route";
 import { runActivity } from "@/lib/tools";
+import { buildTutorPack, looksLikeTutorRequest } from "@/lib/tools/tutor";
+import {
+  answerUnadCampusFaq,
+  looksLikeUnadAssignment,
+  looksLikeUnadCampus,
+  sanitizeUnadKb,
+  unadAssignmentHelp,
+} from "@/lib/tools/unad";
+import { looksLikeNewsCheck, verifyNewsPost } from "@/lib/tools/news-check";
+import {
+  createFocusSession,
+  focusStatusLine,
+  looksLikeFocusRequest,
+  startFocusPhase,
+} from "@/lib/tools/focus";
 import type { ActivityId, ChatTurn, Effort, ModelId, RecipeMessage } from "@/lib/types";
 
 export function lastUserText(messages: ChatTurn[]): string {
@@ -177,6 +192,57 @@ export async function composeConversation(options: {
         sources: polished.sources,
       });
     }
+  }
+
+  // Fase 2: tutor, UNAD, verificador de noticias (antes del flujo genérico).
+  if (looksLikeFocusRequest(latest)) {
+    const session = startFocusPhase(createFocusSession({ softSound: /sonido/i.test(latest) }), "work");
+    const body = [
+      "_Herramienta: Enfoque_",
+      "",
+      "**Modo enfoque (solo dentro de Lumen)**",
+      "",
+      focusStatusLine(session),
+      "",
+      `- Pomodoro ${session.workMinutes}+${session.breakMinutes} × ${session.cycles} ciclos`,
+      `- Sonido suave: ${session.softSound ? "sí" : "no"}`,
+      "- No bloqueamos apps del sistema: solo reducimos distracciones en esta ventana.",
+      "",
+      "Di «pausar enfoque» cuando quieras salir.",
+    ].join("\n");
+    return wrap(options, "", body, { ragHits: 1, languageMode });
+  }
+
+  if (looksLikeTutorRequest(latest) || (options.activity === "estudiar" && /quiz|tarjetas|plan\s+semanal/i.test(latest))) {
+    const pack = await buildTutorPack({ topicOrText: latest, model: options.ollamaModel });
+    const body = pack.answer.includes("Herramienta:")
+      ? pack.answer
+      : `_Herramienta: Tutor_\n\n${pack.answer}`;
+    return wrap(options, "", body, { ragHits: pack.applicable ? 1 : 0, languageMode });
+  }
+  if (looksLikeNewsCheck(latest)) {
+    const news = await verifyNewsPost({
+      text: latest,
+      webSearch: options.webSearch ?? false,
+      model: options.ollamaModel,
+    });
+    const body = `_Herramienta: Verificador_\n\n${news.answer}`;
+    return wrap(options, "", body, { ragHits: news.applicable ? 1 : 0, languageMode });
+  }
+  if (looksLikeUnadCampus(latest)) {
+    const kb = sanitizeUnadKb(undefined);
+    const faq = answerUnadCampusFaq(latest, kb);
+    const body = `_Herramienta: Campus UNAD_\n\n${faq.answer}`;
+    return wrap(options, "", body, { ragHits: 1, languageMode });
+  }
+  if (looksLikeUnadAssignment(latest)) {
+    const help = await unadAssignmentHelp({
+      guideText: latest,
+      mode: "todo",
+      model: options.ollamaModel,
+    });
+    const body = `_Herramienta: Tareas UNAD_\n\n${help.answer}`;
+    return wrap(options, "", body, { ragHits: help.applicable ? 1 : 0, languageMode });
   }
 
   if (options.activity === "investigar" || routedIntent === "investigar") {

@@ -8,6 +8,7 @@ import {
   type OllamaChatModelOption,
 } from "@/lib/ollama-models";
 import { createDeadlineId, type UserMemory } from "@/lib/user-memory";
+import { SEED_UNAD_KB, type UnadKbArticle } from "@/lib/tools/unad";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,6 +30,8 @@ type Props = {
   onMemoryChange: (memory: UserMemory) => void;
   onExportBackup: () => void;
   onImportBackup: (file: File) => void;
+  unadKb?: UnadKbArticle[];
+  onUnadKbChange?: (articles: UnadKbArticle[]) => void;
 };
 
 export function SettingsSheet(props: Props) {
@@ -247,6 +250,44 @@ export function SettingsSheet(props: Props) {
                 Borrar toda la memoria
               </Button>
             </div>
+          </section>
+
+          <section className="space-y-2" aria-labelledby="unad-kb-heading">
+            <h3 id="unad-kb-heading" className="text-sm font-semibold">
+              Base campus UNAD
+            </h3>
+            <p className="text-xs leading-5 text-muted-foreground">
+              Artículos locales editables (casos del SAI). Las respuestas citan el artículo base y no inventan pasos.
+            </p>
+            {(props.unadKb || SEED_UNAD_KB).slice(0, 6).map((article) => (
+              <div key={article.id} className="rounded-xl border border-border px-3 py-2">
+                <p className="text-sm font-medium">{article.title}</p>
+                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{article.body}</p>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                const title = window.prompt("Título del artículo UNAD");
+                const body = title ? window.prompt("Texto (lo que te dijo el SAI)") : null;
+                if (!title?.trim() || !body?.trim() || !props.onUnadKbChange) return;
+                const current = props.unadKb || SEED_UNAD_KB;
+                props.onUnadKbChange([
+                  ...current,
+                  {
+                    id: `unad-${Date.now().toString(36)}`,
+                    title: title.trim().slice(0, 160),
+                    tags: title.toLowerCase().split(/\s+/).slice(0, 6),
+                    body: body.trim().slice(0, 4000),
+                    updatedAt: Date.now(),
+                  },
+                ]);
+              }}
+            >
+              Añadir artículo del SAI
+            </Button>
           </section>
 
           <section className="space-y-2" aria-labelledby="backup-heading">
