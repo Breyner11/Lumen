@@ -126,7 +126,10 @@ async function zipAndDownload(filename: string, files: Record<string, string>): 
   ev.setUint32(12, centralSize, true);
   ev.setUint32(16, offset, true);
 
-  const blob = new Blob([...parts, ...central, end], {
+  const blobParts: BlobPart[] = [...parts, ...central, end].map(
+    (chunk) => chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer,
+  );
+  const blob = new Blob(blobParts, {
     type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   });
   const url = URL.createObjectURL(blob);

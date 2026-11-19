@@ -120,7 +120,7 @@ export function TallerApp() {
   const [showFirstRun, setShowFirstRun] = useState(true);
   const [webSearch, setWebSearch] = useState<boolean | "auto">(false);
   const [searchEngines, setSearchEngines] = useState<SearchEnginePrefs>(DEFAULT_SEARCH_ENGINE_PREFS);
-  const [ollamaModel, setOllamaModel] = useState(DEFAULT_QUALITY_MODEL);
+  const [ollamaModel, setOllamaModel] = useState<string>(DEFAULT_QUALITY_MODEL);
   const [userMemory, setUserMemory] = useState<UserMemory>(EMPTY_USER_MEMORY);
   const [tasks, setTasks] = useState<AssistantTask[]>([]);
   const [unadKb, setUnadKb] = useState<UnadKbArticle[]>(SEED_UNAD_KB);
