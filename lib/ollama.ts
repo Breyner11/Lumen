@@ -171,11 +171,19 @@ export async function ollamaChat(options: {
   think?: boolean;
   numPredict?: number;
   numCtx?: number;
-}): Promise<{ ok: boolean; text: string; thinking?: string; model: string; error?: string }> {
+}): Promise<{
+  ok: boolean;
+  text: string;
+  thinking?: string;
+  model: string;
+  error?: string;
+  firstTokenMs?: number;
+}> {
   const model = await resolveChatModel(options.model);
   const url = ollamaUrl();
   const timeoutMs = options.timeoutMs ?? OLLAMA_CHAT_TIMEOUT_MS;
   const keepAlive = options.keepAlive ?? OLLAMA_CHAT_KEEP_ALIVE;
+  const streamStarted = Date.now();
 
   const ensured = await ensureChatModel(options.signal, model);
   if (!ensured.ok) {
@@ -225,6 +233,7 @@ export async function ollamaChat(options: {
     // Acumula NDJSON de stream:true (message.content por chunk).
     let raw = "";
     let thinkingField = "";
+    let firstTokenMs: number | undefined;
     const reader = response.body?.getReader();
     if (!reader) {
       return { ok: false, text: "", model, error: `Ollama sin cuerpo de respuesta (${model})` };
@@ -246,8 +255,11 @@ export async function ollamaChat(options: {
             response?: string;
             done?: boolean;
           };
-          if (json.message?.content) raw += json.message.content;
-          if (json.response) raw += json.response;
+          const piece = json.message?.content || json.response || "";
+          if (piece) {
+            if (firstTokenMs === undefined) firstTokenMs = Date.now() - streamStarted;
+            raw += piece;
+          }
           if (json.message?.thinking) thinkingField += json.message.thinking;
         } catch {
           // línea incompleta o basura
@@ -286,6 +298,7 @@ export async function ollamaChat(options: {
       text: text.trim(),
       thinking: thinkingField || split.thinking,
       model,
+      firstTokenMs,
     };
   } catch (caught) {
     const detail = caught instanceof Error ? caught.message : String(caught);

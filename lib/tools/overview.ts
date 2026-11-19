@@ -554,12 +554,13 @@ export async function redactOverviewFromKnowledge(options: {
   error?: string;
   model?: string;
   clarity?: ClarityScore;
+  firstTokenMs?: number;
 }> {
   if (options.known?.body) {
     const draft = overviewFromKnown(options.known, []);
     const validation = validateOverviewDraft(options.question, draft);
     const clarity = scoreOverviewClarity(draft, options.question);
-    if (validation.ok) return { ok: true, draft, clarity };
+    if (validation.ok) return { ok: true, draft, clarity, firstTokenMs: 0 };
   }
 
   const skipModel =
@@ -574,6 +575,7 @@ export async function redactOverviewFromKnowledge(options: {
   let lastRaw = "";
   let lastModel = options.model;
   let lastError = "formato inválido";
+  let lastFirstTokenMs: number | undefined;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const drafted = await ollamaChat({
@@ -600,6 +602,7 @@ export async function redactOverviewFromKnowledge(options: {
     });
 
     lastModel = drafted.model;
+    lastFirstTokenMs = drafted.firstTokenMs;
     if (!drafted.ok || !drafted.text.trim()) {
       lastError = drafted.error || "ollama vacío";
       continue;
@@ -631,10 +634,24 @@ export async function redactOverviewFromKnowledge(options: {
       lastError = `validador: ${validation.reasons.join(",")}`;
       continue;
     }
-    return { ok: true, draft: parsed, raw: drafted.text, model: drafted.model, clarity };
+    return {
+      ok: true,
+      draft: parsed,
+      raw: drafted.text,
+      model: drafted.model,
+      clarity,
+      firstTokenMs: drafted.firstTokenMs ?? lastFirstTokenMs,
+    };
   }
 
-  return { ok: false, draft: null, raw: lastRaw || undefined, error: lastError, model: lastModel };
+  return {
+    ok: false,
+    draft: null,
+    raw: lastRaw || undefined,
+    error: lastError,
+    model: lastModel,
+    firstTokenMs: lastFirstTokenMs,
+  };
 }
 
 /** Recupera overview cuando el modelo se desvía un poco de la plantilla. */
@@ -701,6 +718,7 @@ export async function redactOverviewAnswer(options: {
   raw?: string;
   error?: string;
   clarity?: ClarityScore;
+  firstTokenMs?: number;
 }> {
   // Solo usa fallback de scrapes si pasa el validador (casi nunca con títulos Wikipedia).
   const rawFallback = buildOverviewFallback(options);
@@ -735,6 +753,7 @@ export async function redactOverviewAnswer(options: {
   const attempts = options.attempts ?? 2;
   let lastRaw = "";
   let lastError = "formato inválido";
+  let lastFirstTokenMs: number | undefined;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const drafted = await ollamaChat({
@@ -763,6 +782,7 @@ export async function redactOverviewAnswer(options: {
       ].join("\n"),
     });
 
+    lastFirstTokenMs = drafted.firstTokenMs;
     if (!drafted.ok || !drafted.text.trim()) {
       lastError = drafted.error || "ollama vacío";
       continue;
@@ -785,6 +805,7 @@ export async function redactOverviewAnswer(options: {
       draft: parsed,
       raw: drafted.text,
       clarity: scoreOverviewClarity(parsed, options.question),
+      firstTokenMs: drafted.firstTokenMs ?? lastFirstTokenMs,
     };
   }
 
@@ -792,6 +813,7 @@ export async function redactOverviewAnswer(options: {
     ok: false,
     draft: fallback,
     raw: lastRaw || undefined,
+    firstTokenMs: lastFirstTokenMs,
     error: lastError,
     clarity: fallback ? scoreOverviewClarity(fallback, options.question) : undefined,
   };
