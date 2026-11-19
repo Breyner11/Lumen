@@ -95,6 +95,25 @@ export function sanitizeSearchEnginePrefs(raw: unknown): SearchEnginePrefs {
   return base;
 }
 
+/** Variantes de búsqueda: quita muletillas de pregunta para APIs tipo Wikipedia. */
+export function searchQueryVariants(question: string): string[] {
+  const raw = question.replace(/[¿?¡!]/g, " ").replace(/\s+/g, " ").trim();
+  const stripped = raw
+    .replace(
+      /^(cu[aá]l\s+es\s+(la|el)\s+|cu[aá]ntos?\s+(es|son|tiene|hay)\s+|qu[eé]\s+es\s+(un|una|el|la)?\s*|c[oó]mo\s+(se\s+)?|dime\s+|explica\s+)/i,
+      "",
+    )
+    .trim();
+  const variants = [raw, stripped].filter(Boolean);
+  // Capital de X → también "X" y "capital de X"
+  const capital = /capital\s+de\s+(.+)/i.exec(stripped || raw);
+  if (capital?.[1]) {
+    variants.push(capital[1].trim());
+    variants.push(`capital de ${capital[1].trim()}`);
+  }
+  return [...new Set(variants.map((v) => v.slice(0, 120)))].slice(0, 3);
+}
+
 /** Consulta 2–3 motores en paralelo, deduplica y prioriza fuentes confiables. */
 export async function multiSearch(
   query: string,
@@ -103,6 +122,8 @@ export async function multiSearch(
 ): Promise<MultiSearchResult> {
   const timeoutMs = options?.timeoutMs ?? 4_500;
   const limit = options?.limit ?? 8;
+  const variants = searchQueryVariants(query);
+  const primary = variants[0] || query;
   const enginesTried: SearchEngineId[] = [];
   const tasks: Array<Promise<{ engine: SearchEngineId; hits: MultiSearchHit[] }>> = [];
 
@@ -117,9 +138,21 @@ export async function multiSearch(
   };
 
   // Orden de arranque: SearXNG primero, luego libres, DDG al final.
-  queue("searxng", prefs.searxng, () => searchSearxng(query, prefs.searxngUrl));
-  queue("wikipedia", prefs.wikipedia, () => searchWikipediaEs(query));
-  queue("wikidata", prefs.wikidata, () => searchWikidata(query));
+  queue("searxng", prefs.searxng, () => searchSearxng(primary, prefs.searxngUrl));
+  queue("wikipedia", prefs.wikipedia, async () => {
+    for (const v of variants) {
+      const hits = await searchWikipediaEs(v);
+      if (hits.length) return hits;
+    }
+    return [];
+  });
+  queue("wikidata", prefs.wikidata, async () => {
+    for (const v of variants) {
+      const hits = await searchWikidata(v);
+      if (hits.length) return hits;
+    }
+    return [];
+  });
 
   // Si SearXNG + wiki ya cubren, aún lanzamos 1 respaldo (marginalia o ddg).
   const primaryCount = [prefs.searxng, prefs.wikipedia, prefs.wikidata].filter(Boolean).length;

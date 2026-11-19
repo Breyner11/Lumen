@@ -339,7 +339,12 @@ export function scoreOverviewClarity(draft: OverviewDraft, question = ""): Clari
       reasons.push("cierre_titulo");
     }
     const cn = countSentences(draft.closing.text);
-    if (cn < 1 || cn > 2) reasons.push("cierre_largo");
+    // Las citas bibliográficas llevan varios puntos; no las tratamos como «demasiadas frases».
+    const looksLikeCitation = /\(\d{4}\)/.test(draft.closing.text) && /editorial|doi|https?:/i.test(draft.closing.text) === false
+      ? /\(\d{4}\)/.test(draft.closing.text)
+      : /\(\d{4}\)/.test(draft.closing.text);
+    if (!looksLikeCitation && (cn < 1 || cn > 2)) reasons.push("cierre_largo");
+    if (looksLikeCitation && draft.closing.text.length > 320) reasons.push("cierre_largo");
   }
 
   const blob = draftWordBlob(draft);

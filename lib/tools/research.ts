@@ -98,6 +98,24 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
     ].join("\n"),
   },
   {
+    match: /cita\s+(en\s+)?APA\s*7|APA\s*7.*libro|referenciar?\s+un\s+libro.*APA/i,
+    title: "Cita APA 7 de un libro",
+    body: [
+      "En APA 7, la referencia de un libro incluye autor, año, título en cursiva y editorial. En el texto se cita con apellido y año, por ejemplo García Márquez (1967). Si hay DOI o URL estable, se agrega al final de la referencia.",
+      "",
+      "**Elementos de la referencia**",
+      "",
+      "- **Autor:** Se escribe el apellido y las iniciales. Un ejemplo claro es García Márquez, G.",
+      "- **Año:** Va entre paréntesis después del autor, por ejemplo (1967), y luego un punto.",
+      "- **Título:** Va en cursiva y con mayúscula solo al inicio, salvo nombres propios.",
+      "- **Editorial:** Se indica el nombre de la editorial; si existe DOI, se coloca al final.",
+      "",
+      "**Ejemplo**",
+      "",
+      "Una referencia completa queda así: García Márquez, G. (1967). Cien años de soledad. Editorial Sudamericana.",
+    ].join("\n"),
+  },
+  {
     match: /sin[oó]nimos?\s+de\s+feliz/,
     title: "Sinónimos de feliz",
     body: [
