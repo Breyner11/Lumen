@@ -53,11 +53,11 @@ export const ACTIVITIES: Activity[] = [
     id: "calcular",
     number: "04",
     label: "Calcular",
-    blurb: "Porcentajes, operaciones, ecuaciones lineales, mcd y raíces.",
-    placeholder: "15% de 240, o 2x + 5 = 17…",
-    starters: ["¿Cuánto es el 15% de 240?", "Resuelve 2x + 5 = 17"],
+    blurb: "SymPy exacto, fotos de fórmulas y pasos verificados.",
+    placeholder: "15% de 240, integra x**2, o sube una foto…",
+    starters: ["¿Cuánto es el 15% de 240?", "Resuelve 2x + 5 = 17", "integra x**2"],
     system:
-      "Eres quien resuelve cuentas con un estudiante. Muestras los pasos y una comprobación. Si el taller ya calculó un resultado, ese número manda: explícalo, no lo cambies. Si la cuenta no es lineal o no está completa, dilo.",
+      "Eres quien resuelve cuentas con un estudiante. Priorizas resultados de SymPy cuando existan. Muestras pasos y comprobación. Si hay LaTeX de una imagen, lo respetas y no inventas cifras.",
   },
   {
     id: "organizar",

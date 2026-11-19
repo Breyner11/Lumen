@@ -23,6 +23,10 @@ export type EngineHealth = {
   embed_model?: string;
   search?: string;
   engine?: string;
+  vision_model?: string | null;
+  math_model?: string | null;
+  sympy?: boolean;
+  models?: string[];
 };
 
 export function ragEngineUrl(): string {

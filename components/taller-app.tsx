@@ -9,6 +9,7 @@ import {
   Clock3,
   Code2,
   History,
+  ImagePlus,
   Languages,
   Library,
   ListChecks,
@@ -70,6 +71,9 @@ type RagStatus = {
   ollama: boolean;
   embedModel: string;
   search: string;
+  visionModel?: string | null;
+  sympy?: boolean;
+  mathModel?: string | null;
 };
 
 export function TallerApp() {
@@ -94,11 +98,17 @@ export function TallerApp() {
   const [skinsOpen, setSkinsOpen] = useState(false);
   const [docTitle, setDocTitle] = useState("");
   const [docText, setDocText] = useState("");
+  const [imageQuery, setImageQuery] = useState("");
+  const [imageHits, setImageHits] = useState<
+    Array<{ id: string; title: string; caption?: string | null; latex?: string | null; score: number }>
+  >([]);
+  const [imageSearchNote, setImageSearchNote] = useState("");
   const [copied, setCopied] = useState(false);
   const [ready, setReady] = useState(false);
   const [correctingIndex, setCorrectingIndex] = useState<number | null>(null);
   const [correctionDraft, setCorrectionDraft] = useState("");
   const [learnNote, setLearnNote] = useState("");
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const current = ACTIVITY_MAP[activity];
@@ -241,11 +251,134 @@ export function TallerApp() {
     setCorrectionDraft("");
   }
 
+  async function searchStoredImages() {
+    const query = imageQuery.trim();
+    if (query.length < 2) return;
+    setImageSearchNote("Buscando…");
+    try {
+      const response = await fetch("/api/images/search", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query, topK: 6 }),
+      });
+      const json = (await response.json()) as {
+        hits?: Array<{ id: string; title: string; caption?: string | null; latex?: string | null; score: number }>;
+        error?: string;
+      };
+      setImageHits(json.hits ?? []);
+      setImageSearchNote(
+        json.error
+          ? json.error
+          : (json.hits?.length ?? 0) === 0
+            ? "Sin coincidencias. Sube fotos desde Calcular primero."
+            : `${json.hits!.length} imagen${json.hits!.length === 1 ? "" : "es"}`,
+      );
+    } catch (caught) {
+      setImageHits([]);
+      setImageSearchNote(caught instanceof Error ? caught.message : "No pude buscar imágenes.");
+    }
+  }
+
+  async function solveImage(file: File) {
+    if (streaming) return;
+    setError("");
+    setLearnNote("");
+    setActivity("calcular");
+    const previewUrl = URL.createObjectURL(file);
+    const userMessage: StoredMessage = {
+      role: "user",
+      content: `📷 Imagen: ${file.name}\n(Problema matemático / apunte)`,
+    };
+    const placeholder: StoredMessage = { role: "assistant", content: "", mode: "taller" };
+    setThreads((current) => ({
+      ...current,
+      calcular: [...(current.calcular ?? []), userMessage, placeholder],
+    }));
+    setStreaming(true);
+    try {
+      const body = new FormData();
+      body.append("file", file, file.name);
+      const response = await fetch("/api/vision/solve", { method: "POST", body });
+      const json = (await response.json()) as { ok?: boolean; answer?: string; error?: string };
+      const answer =
+        json.answer ||
+        json.error ||
+        "No pude leer la imagen. Arranca el motor Python y `ollama pull qwen2.5-vl:3b`.";
+      setThreads((current) => {
+        const list = [...(current.calcular ?? [])];
+        const last = list[list.length - 1];
+        if (last?.role === "assistant") {
+          list[list.length - 1] = { ...last, content: answer, mode: "taller" };
+        }
+        return { ...current, calcular: list };
+      });
+      setHistory((entries) =>
+        pushHistory(entries, {
+          activity: "calcular",
+          query: `imagen:${file.name}`,
+          preview: answer.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, 180),
+        }),
+      );
+      if (json.ok) {
+        setLearnNote("Guardé la imagen, el LaTeX y la solución SymPy en la memoria del motor.");
+        window.setTimeout(() => setLearnNote(""), 5000);
+      }
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "No pude procesar la imagen.";
+      setError(message);
+    } finally {
+      URL.revokeObjectURL(previewUrl);
+      setStreaming(false);
+    }
+  }
+
   async function send(text = draft) {
     const content = text.trim();
     if (!content || streaming) return;
     setError("");
     setLearnNote("");
+
+    // Calcular: prefer SymPy engine when available (exact derivatives/integrals/equations).
+    if (activity === "calcular") {
+      setStreaming(true);
+      setDraft("");
+      try {
+        const response = await fetch("/api/math/solve", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ problem: content, webContext: true }),
+        });
+        const json = (await response.json()) as {
+          ok?: boolean;
+          answer?: string;
+          remembered?: boolean;
+        };
+        if (json.answer) {
+          const historyTurns: StoredMessage[] = [
+            ...thread,
+            { role: "user", content },
+            { role: "assistant", content: json.answer, mode: "taller" },
+          ];
+          setThreads((currentThreads) => ({ ...currentThreads, calcular: historyTurns }));
+          setHistory((entries) =>
+            pushHistory(entries, {
+              activity: "calcular",
+              query: content,
+              preview: json.answer!.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, 180),
+            }),
+          );
+          if (json.remembered) {
+            setLearnNote("Reutilicé un problema parecido de la memoria matemática.");
+            window.setTimeout(() => setLearnNote(""), 4000);
+          }
+          return;
+        }
+      } catch {
+        // fall through to normal chat
+      } finally {
+        setStreaming(false);
+      }
+    }
 
     const autoCorrection = parseCorrectionMessage(content);
     if (autoCorrection) {
@@ -491,9 +624,10 @@ export function TallerApp() {
 
         {status === "taller" && (
           <p className="mx-3 mt-2 rounded-xl bg-accent/70 px-3 py-2 text-sm text-accent-foreground md:mx-0 md:mr-3">
-            Modo taller + RAG: DuckDuckGo, documentos indexados
-            {ragStatus?.engine ? " y motor Python/SQLite" : ""}
-            {ragStatus?.ollama ? " con Ollama" : ""}. Si se equivoca, marca Mal o escribe «está mal, la respuesta es…».
+            Modo taller + RAG: DuckDuckGo, documentos
+            {ragStatus?.engine ? ", SymPy" : ""}
+            {ragStatus?.visionModel ? ` y visión (${ragStatus.visionModel})` : ragStatus?.engine ? " (visión con Ollama si instalas qwen2.5-vl)" : ""}
+            . En Calcular puedes subir una foto de una fórmula.
             {lessons.length > 0 ? ` Lleva ${lessons.length} corrección${lessons.length === 1 ? "" : "es"}.` : ""}
           </p>
         )}
@@ -560,7 +694,11 @@ export function TallerApp() {
             <Textarea
               id="mensaje"
               value={draft}
-              placeholder={current.placeholder}
+              placeholder={
+                activity === "calcular"
+                  ? "15% de 240, 2x+5=17, integra x**2… o sube una foto"
+                  : current.placeholder
+              }
               disabled={streaming}
               rows={2}
               className="max-h-40 min-h-16 border-0 bg-transparent shadow-none focus-visible:ring-0"
@@ -572,6 +710,29 @@ export function TallerApp() {
                 }
               }}
             />
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (file) void solveImage(file);
+              }}
+            />
+            {(activity === "calcular" || activity === "investigar" || activity === "estudiar") && (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-lg"
+                aria-label="Subir imagen de un problema o apunte"
+                disabled={streaming}
+                onClick={() => imageInputRef.current?.click()}
+              >
+                <ImagePlus />
+              </Button>
+            )}
             {streaming ? (
               <Button type="button" variant="outline" size="icon-lg" className="brand-mark" aria-label="Detener" onClick={() => abortRef.current?.abort()}>
                 <Square />
@@ -675,6 +836,38 @@ export function TallerApp() {
                       <Trash2 />
                     </Button>
                   </div>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2 border-t border-border pt-4">
+              <p className="text-sm font-medium">Memoria de imágenes</p>
+              <p className="text-xs leading-5 text-muted-foreground">
+                Busca fotos ya guardadas por contenido (“gráfica de parábola”, “integral a mano”).
+              </p>
+              <div className="flex gap-2">
+                <input
+                  value={imageQuery}
+                  onChange={(event) => setImageQuery(event.target.value)}
+                  placeholder="Buscar imagen…"
+                  className="h-10 min-w-0 flex-1 rounded-xl border border-border bg-background px-3 text-sm"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void searchStoredImages();
+                    }
+                  }}
+                />
+                <Button type="button" variant="outline" disabled={imageQuery.trim().length < 2} onClick={() => void searchStoredImages()}>
+                  Buscar
+                </Button>
+              </div>
+              {imageSearchNote ? <p className="text-xs text-muted-foreground">{imageSearchNote}</p> : null}
+              {imageHits.map((hit) => (
+                <div key={hit.id} className="rounded-xl border border-border bg-card/70 px-3 py-3">
+                  <p className="truncate text-sm font-medium">{hit.title}</p>
+                  {hit.caption ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{hit.caption}</p> : null}
+                  {hit.latex ? <p className="mt-1 font-mono text-[11px] text-muted-foreground">{hit.latex}</p> : null}
+                  <p className="mt-1 text-[11px] text-muted-foreground">similitud {(hit.score * 100).toFixed(0)}%</p>
                 </div>
               ))}
             </div>

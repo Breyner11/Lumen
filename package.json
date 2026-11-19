@@ -10,7 +10,7 @@
     "test": "tsx --test tests/**/*.test.ts",
     "rag:install": "python3 -m pip install --user -r services/rag-engine/requirements.txt",
     "rag:engine": "python3 services/rag-engine/app.py",
-    "rag:ollama": "ollama pull nomic-embed-text"
+    "rag:ollama": "ollama pull nomic-embed-text && ollama pull qwen2.5-vl:3b && ollama pull qwen2.5-math:1.5b"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

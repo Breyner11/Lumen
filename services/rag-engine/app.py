@@ -4,8 +4,9 @@ Motor RAG local de Taller.
 Stack:
 - Python + FastAPI
 - DuckDuckGo Search (web en tiempo real)
-- SQLite (memoria persistente de lo aprendido / documentos)
-- Ollama + nomic-embed-text (embeddings locales; fallback TF-IDF si no hay Ollama)
+- SQLite (documentos, lecciones, imágenes, memoria matemática)
+- Ollama + nomic-embed-text / Qwen2.5-VL / Qwen2.5-Math
+- SymPy (cálculo exacto)
 """
 
 from __future__ import annotations
@@ -22,13 +23,27 @@ from typing import Any
 
 import httpx
 from ddgs import DDGS
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+
+from images import (
+    ensure_image_tables,
+    find_similar_math,
+    index_image,
+    remember_math,
+    save_image_file,
+    search_images,
+)
+from math_solver import solve_math_text
+from vision import list_ollama_models, pick_vision_model, read_image
 
 DATA_DIR = Path(os.environ.get("TALLER_RAG_DATA", Path(__file__).resolve().parent / "data"))
 DB_PATH = DATA_DIR / "taller-rag.sqlite"
+IMAGES_DIR = DATA_DIR / "images"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "qwen2.5-vl:3b")
+MATH_MODEL = os.environ.get("OLLAMA_MATH_MODEL", "qwen2.5-math:1.5b")
 ENGINE_PORT = int(os.environ.get("RAG_ENGINE_PORT", "8765"))
 
 STOPWORDS = {
@@ -99,6 +114,7 @@ def connect() -> sqlite3.Connection:
         )
         """
     )
+    ensure_image_tables(conn)
     return conn
 
 
@@ -207,14 +223,218 @@ def load_embedding(raw: str) -> Any:
 @app.get("/health")
 async def health() -> dict[str, Any]:
     ollama = await ollama_available()
+    models = await list_ollama_models(OLLAMA_URL) if ollama else []
+    vision = pick_vision_model(models, VISION_MODEL) if ollama else None
     return {
         "ok": True,
         "engine": "taller-rag-python",
         "db": str(DB_PATH),
         "ollama": ollama,
         "embed_model": EMBED_MODEL if ollama else "tfidf-fallback",
+        "vision_model": vision,
+        "math_model": MATH_MODEL if ollama else None,
+        "sympy": True,
         "search": "duckduckgo",
+        "models": models[:20],
     }
+
+
+class MathRequest(BaseModel):
+    problem: str = Field(min_length=1, max_length=4000)
+    web_context: bool = False
+
+
+@app.post("/math/solve")
+async def math_solve(body: MathRequest) -> dict[str, Any]:
+    with connect() as conn:
+        remembered = find_similar_math(conn, body.problem)
+    if remembered and remembered.get("score", 0) >= 0.75:
+        return {
+            "ok": True,
+            "remembered": True,
+            "latex": remembered.get("latex"),
+            "result": remembered["result"],
+            "code": remembered.get("code"),
+            "steps": [
+                "Recordé un problema parecido en la memoria matemática.",
+                *remembered.get("steps", []),
+            ],
+            "backend": "math-memory",
+            "memory_id": remembered["id"],
+        }
+
+    context_bits: list[str] = []
+    if body.web_context:
+        try:
+            for item in ddg_text(body.problem[:120], 3):
+                if item.get("snippet"):
+                    context_bits.append(f"{item['title']}: {item['snippet']}")
+        except Exception:
+            context_bits = []
+
+    problem = body.problem
+    if context_bits:
+        problem = f"{body.problem}\n\nContexto web:\n" + "\n".join(context_bits)
+
+    ollama = OLLAMA_URL if await ollama_available() else ""
+    solved = solve_math_text(problem, ollama_url=ollama, math_model=MATH_MODEL)
+    if not solved.get("ok"):
+        raise HTTPException(status_code=422, detail=solved.get("error") or "No resolví el problema.")
+
+    with connect() as conn:
+        memory_id = remember_math(
+            conn,
+            problem=body.problem,
+            result=str(solved.get("result")),
+            latex=solved.get("latex"),
+            code=solved.get("code"),
+            steps=solved.get("steps") or [],
+        )
+    solved["memory_id"] = memory_id
+    solved["remembered"] = False
+    return solved
+
+
+@app.post("/vision/read")
+async def vision_read(
+    file: UploadFile = File(...),
+    prompt: str | None = Form(default=None),
+) -> dict[str, Any]:
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Imagen vacía.")
+    if len(raw) > 8_000_000:
+        raise HTTPException(status_code=413, detail="La imagen supera 8 MB.")
+    mime = file.content_type or "image/png"
+    result = await read_image(raw, mime, OLLAMA_URL, VISION_MODEL, prompt)
+    if not result.get("ok"):
+        raise HTTPException(status_code=503, detail=result.get("error") or "Visión no disponible.")
+
+    image_id, path = save_image_file(IMAGES_DIR, raw, mime)
+    with connect() as conn:
+        indexed = index_image(
+            conn,
+            image_id=image_id,
+            path=path,
+            mime=mime,
+            title=file.filename or image_id,
+            caption=result.get("caption") or result.get("text"),
+            latex=result.get("latex"),
+        )
+    result["image_id"] = image_id
+    result["index_backend"] = indexed.get("backend")
+    return result
+
+
+@app.post("/vision/solve")
+async def vision_solve(
+    file: UploadFile = File(...),
+    web_context: bool = Form(default=True),
+) -> dict[str, Any]:
+    """Full pipeline: image → VLM/LaTeX → SymPy → memory."""
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Imagen vacía.")
+    if len(raw) > 8_000_000:
+        raise HTTPException(status_code=413, detail="La imagen supera 8 MB.")
+    mime = file.content_type or "image/png"
+
+    vision = await read_image(
+        raw,
+        mime,
+        OLLAMA_URL,
+        VISION_MODEL,
+        prompt=(
+            "Lee el problema matemático o la fórmula de la imagen. "
+            "Transcribe la fórmula exacta en LaTeX entre $$ ... $$. "
+            "Si hay enunciado, inclúyelo. Español."
+        ),
+    )
+
+    image_id, path = save_image_file(IMAGES_DIR, raw, mime)
+    caption = (vision.get("caption") or vision.get("text") or file.filename or image_id) if vision.get("ok") else (file.filename or image_id)
+    latex = vision.get("latex") if vision.get("ok") else None
+    with connect() as conn:
+        index_image(
+            conn,
+            image_id=image_id,
+            path=path,
+            mime=mime,
+            title=file.filename or image_id,
+            caption=caption,
+            latex=latex,
+        )
+
+    if not vision.get("ok"):
+        return {
+            "ok": False,
+            "image_id": image_id,
+            "error": vision.get("error"),
+            "hint": "Sin Ollama visión no puedo leer la foto. Puedes pegar la fórmula en texto/LaTeX en Calcular.",
+        }
+
+    problem = latex or vision.get("text") or ""
+    if web_context and problem:
+        try:
+            snippets = [f"{item['title']}: {item['snippet']}" for item in ddg_text(problem[:100], 2) if item.get("snippet")]
+            if snippets:
+                problem = f"{problem}\n\nContexto:\n" + "\n".join(snippets)
+        except Exception:
+            pass
+
+    ollama = OLLAMA_URL if await ollama_available() else ""
+    solved = solve_math_text(problem, ollama_url=ollama, math_model=MATH_MODEL)
+    if not solved.get("ok"):
+        return {
+            "ok": False,
+            "image_id": image_id,
+            "vision": vision,
+            "error": solved.get("error") or "Leí la imagen pero no pude calcularla con SymPy.",
+            "latex": latex,
+            "text": vision.get("text"),
+        }
+
+    with connect() as conn:
+        memory_id = remember_math(
+            conn,
+            problem=vision.get("text") or latex or caption,
+            result=str(solved.get("result")),
+            latex=latex or solved.get("latex"),
+            code=solved.get("code"),
+            steps=solved.get("steps") or [],
+            image_id=image_id,
+        )
+
+    return {
+        "ok": True,
+        "image_id": image_id,
+        "memory_id": memory_id,
+        "vision_model": vision.get("model"),
+        "text": vision.get("text"),
+        "latex": latex or solved.get("latex"),
+        "result": solved.get("result"),
+        "result_latex": solved.get("result_latex"),
+        "code": solved.get("code"),
+        "steps": [
+            f"1. Visión ({vision.get('model')}): leí la imagen.",
+            f"2. LaTeX: `{latex or solved.get('latex')}`",
+            *([step for step in (solved.get("steps") or [])]),
+            "3. Guardé imagen + código + solución en la memoria local.",
+        ],
+        "backend": solved.get("backend"),
+    }
+
+
+class ImageSearchRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=300)
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+@app.post("/images/search")
+async def images_search(body: ImageSearchRequest) -> dict[str, Any]:
+    with connect() as conn:
+        hits = search_images(conn, body.query, body.top_k)
+    return {"query": body.query, "hits": hits}
 
 
 def ddg_text(query: str, max_results: int) -> list[dict[str, str]]:
