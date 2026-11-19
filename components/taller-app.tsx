@@ -646,7 +646,7 @@ export function TallerApp() {
           if (payload.type === "status") {
             // Solo actualiza el texto provisional si aún no hay respuesta.
             if (!answerPreview) {
-              patchAssistant({ content: "_" + (payload.text || "Pensando…") + "_" });
+              patchAssistant({ content: payload.text || "Pensando…" });
             }
             continue;
           }
@@ -1411,6 +1411,31 @@ function HistoryPanel({
   );
 }
 
+function normalizeStatusLabel(text: string): string {
+  const clean = text.replace(/^_+|_+$/g, "").trim();
+  return clean || "Pensando…";
+}
+
+function isThinkingStatus(text: string): boolean {
+  const clean = normalizeStatusLabel(text);
+  if (!clean) return true;
+  if (clean.length > 64) return false;
+  return /^(Pensando|Buscando información|Preparando)/i.test(clean);
+}
+
+function ThinkingStatus({ label }: { label: string }) {
+  return (
+    <p className="status-thinking font-heading text-[1.08rem] italic leading-snug tracking-wide text-muted-foreground">
+      <span>{label.replace(/…$/, "")}</span>
+      <span className="status-thinking-dots" aria-hidden="true">
+        <span>.</span>
+        <span>.</span>
+        <span>.</span>
+      </span>
+    </p>
+  );
+}
+
 function MessageBubble({
   message,
   pending,
@@ -1455,7 +1480,6 @@ function MessageBubble({
         {!mine && (
           <div className="mb-2 flex items-center gap-2">
             <Badge variant="outline">{message.mode === "model" ? "DeepSeek" : "Taller"}</Badge>
-            {pending && !message.content && <span className="text-xs text-muted-foreground">Pensando…</span>}
           </div>
         )}
         {message.reasoning && (
@@ -1466,6 +1490,8 @@ function MessageBubble({
         )}
         {mine ? (
           <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
+        ) : pending && isThinkingStatus(message.content) ? (
+          <ThinkingStatus label={normalizeStatusLabel(message.content)} />
         ) : (
           <MarkdownView
             text={message.content || (pending ? "" : "…")}
