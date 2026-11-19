@@ -582,6 +582,19 @@ export function TallerApp() {
     abortRef.current = controller;
     const target = activity;
     let answerPreview = "";
+    let sawDone = false;
+
+    const patchAssistant = (patch: Partial<StoredMessage>) => {
+      setThreads((currentThreads) => {
+        const list = currentThreads[target] ?? [];
+        const last = list[list.length - 1];
+        if (!last || last.role !== "assistant") return currentThreads;
+        const next = [...list];
+        next[next.length - 1] = { ...last, ...patch };
+        return { ...currentThreads, [target]: next };
+      });
+    };
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -599,7 +612,7 @@ export function TallerApp() {
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error || "No pude completar la petición.");
+        throw new Error(body?.error || `No pude completar la petición (HTTP ${response.status}).`);
       }
       if (!response.body) throw new Error("La respuesta llegó vacía.");
       const reader = response.body.getReader();
@@ -614,8 +627,8 @@ export function TallerApp() {
         buffer = lines.pop() ?? "";
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const payload = JSON.parse(trimmed.slice(5)) as {
+          if (!trimmed || !trimmed.startsWith("data:")) continue;
+          let payload: {
             type?: string;
             text?: string;
             mode?: "model" | "taller";
@@ -624,13 +637,33 @@ export function TallerApp() {
             images?: Array<{ url: string; title?: string }>;
             sources?: Array<{ title: string; url: string }>;
           };
+          try {
+            payload = JSON.parse(trimmed.slice(5)) as typeof payload;
+          } catch {
+            continue;
+          }
+          if (payload.type === "ping") continue;
+          if (payload.type === "status") {
+            // Solo actualiza el texto provisional si aún no hay respuesta.
+            if (!answerPreview) {
+              patchAssistant({ content: "_" + (payload.text || "Preparando...") + "_" });
+            }
+            continue;
+          }
           if (payload.type === "error") {
-            setError(payload.message || "Algo falló al responder.");
-          } else if (payload.type === "content" || payload.type === "reasoning" || payload.type === "done") {
+            const message = payload.message || "Algo falló al responder.";
+            setError(message);
+            if (!answerPreview) patchAssistant({ content: message, mode: "taller" });
+            continue;
+          }
+          if (payload.type === "content" || payload.type === "reasoning" || payload.type === "done") {
             if (payload.type === "content" && payload.text) answerPreview += payload.text;
-            if (payload.type === "done" && payload.learnedFrom) {
-              learnedFrom = payload.learnedFrom;
-              setLessons((current) => touchLesson(current, payload.learnedFrom!));
+            if (payload.type === "done") {
+              sawDone = true;
+              if (payload.learnedFrom) {
+                learnedFrom = payload.learnedFrom;
+                setLessons((current) => touchLesson(current, payload.learnedFrom!));
+              }
             }
             setThreads((currentThreads) => {
               const list = currentThreads[target] ?? [];
@@ -639,7 +672,7 @@ export function TallerApp() {
               const next = [...list];
               next[next.length - 1] = {
                 ...last,
-                content: payload.type === "content" ? last.content + (payload.text ?? "") : last.content,
+                content: payload.type === "content" ? answerPreview : last.content,
                 reasoning:
                   payload.type === "reasoning" ? `${last.reasoning ?? ""}${payload.text ?? ""}` : last.reasoning,
                 mode: payload.type === "done" ? payload.mode ?? last.mode : last.mode,
@@ -651,21 +684,33 @@ export function TallerApp() {
           }
         }
       }
-      setHistory((entries) =>
-        pushHistory(entries, {
-          activity: target,
-          query: content,
-          preview: answerPreview.replace(/\*\*/g, "").replace(/\s+/g, " ").trim() || "Respuesta del taller",
-        }),
-      );
+      if (!sawDone && !answerPreview) {
+        const fallback =
+          "La conexión se cerró antes de recibir la respuesta. Revisa que Ollama esté en marcha e inténtalo de nuevo.";
+        setError(fallback);
+        patchAssistant({ content: fallback, mode: "taller" });
+      } else {
+        setHistory((entries) =>
+          pushHistory(entries, {
+            activity: target,
+            query: content,
+            preview: answerPreview.replace(/\*\*/g, "").replace(/\s+/g, " ").trim() || "Respuesta del taller",
+          }),
+        );
+      }
       if (learnedFrom) {
         setLearnNote("Usé una corrección que aprendí antes.");
         window.setTimeout(() => setLearnNote(""), 4000);
       }
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
-      const message = caught instanceof Error ? caught.message : "No pude completar la petición.";
+      const raw = caught instanceof Error ? caught.message : "No pude completar la petición.";
+      const message =
+        /failed to fetch|networkerror|load failed|fetch failed/i.test(raw)
+          ? `Error de red al hablar con el servidor (${raw}). Si Ollama tarda en cargar el modelo, espera e inténtalo otra vez.`
+          : raw;
       setError(message);
+      if (!answerPreview) patchAssistant({ content: message, mode: "taller" });
     } finally {
       setStreaming(false);
       abortRef.current = null;

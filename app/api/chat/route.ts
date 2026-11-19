@@ -4,8 +4,12 @@ import { composeConversation, type ComposeResult } from "@/lib/compose";
 import { parseChatRequest } from "@/lib/chat-request";
 import type { ChatRequest } from "@/lib/chat-request";
 
+/** Evita que el host corte rutas largas (p. ej. primera carga de Ollama). */
+export const maxDuration = 300;
+
 const WINDOW_MS = 60_000;
 const LIMIT = 20;
+const HEARTBEAT_MS = 4_000;
 const hits = new Map<string, number[]>();
 
 function allow(key: string): boolean {
@@ -91,6 +95,7 @@ export async function POST(request: Request) {
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "private, no-store",
+      "connection": "keep-alive",
       "x-accel-buffering": "no",
     },
   });
@@ -99,63 +104,88 @@ export async function POST(request: Request) {
 function composeStream(request: ChatRequest, signal: AbortSignal): ReadableStream<Uint8Array> {
   return new ReadableStream({
     async start(controller) {
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
+      const safeEnqueue = (payload: unknown) => {
+        if (signal.aborted) return;
+        try {
+          controller.enqueue(sse(payload));
+        } catch (caught) {
+          console.error("[taller/chat] no pude escribir SSE:", caught);
+        }
+      };
+
       try {
+        // Primer byte inmediato: evita "Failed to fetch" por conexión idle.
+        safeEnqueue({ type: "status", text: "Preparando respuesta con DeepSeek…" });
+        heartbeat = setInterval(() => {
+          safeEnqueue({ type: "ping", t: Date.now() });
+        }, HEARTBEAT_MS);
+
         const { OLLAMA_CHAT_MODEL, formatOllamaErrorForUser, ensureChatModel } = await import(
           "@/lib/ollama"
         );
         const readiness = await ensureChatModel(signal);
         if (!readiness.ok) {
           console.error("[taller/chat] Ollama no listo:", readiness.error);
-          controller.enqueue(
-            sse({
-              type: "content",
-              text: formatOllamaErrorForUser(readiness.error, readiness.model),
-            }),
-          );
-          controller.enqueue(
-            sse({
-              type: "done",
-              mode: "taller",
-              model: readiness.model,
-              images: [],
-              sources: [],
-            }),
-          );
-          controller.close();
+          safeEnqueue({
+            type: "content",
+            text: formatOllamaErrorForUser(readiness.error, readiness.model),
+          });
+          safeEnqueue({
+            type: "done",
+            mode: "taller",
+            model: readiness.model,
+            images: [],
+            sources: [],
+          });
           return;
         }
+
+        safeEnqueue({ type: "status", text: "Redactando con deepseek-r1:1.5b…" });
         const composed = await composeConversation({ ...request, now: new Date() });
-        if (signal.aborted) {
-          controller.close();
-          return;
-        }
+        if (signal.aborted) return;
         emitComposed(controller, composed, OLLAMA_CHAT_MODEL);
-        controller.close();
       } catch (caught) {
-        if (signal.aborted) {
-          controller.close();
-          return;
-        }
+        if (signal.aborted) return;
         const detail = caught instanceof Error ? caught.message : String(caught);
         console.error("[taller/chat] error al componer:", detail);
-        const { formatOllamaErrorForUser, OLLAMA_CHAT_MODEL } = await import("@/lib/ollama");
-        controller.enqueue(
-          sse({
+        try {
+          const { formatOllamaErrorForUser, OLLAMA_CHAT_MODEL } = await import("@/lib/ollama");
+          safeEnqueue({
             type: "content",
             text: formatOllamaErrorForUser(detail, OLLAMA_CHAT_MODEL),
-          }),
-        );
-        controller.enqueue(
-          sse({
+          });
+          safeEnqueue({
             type: "done",
             mode: "taller",
             model: OLLAMA_CHAT_MODEL,
             images: [],
             sources: [],
-          }),
-        );
-        controller.close();
+          });
+        } catch {
+          safeEnqueue({
+            type: "error",
+            message: detail || "Error interno al responder.",
+          });
+          safeEnqueue({
+            type: "done",
+            mode: "taller",
+            model: "taller",
+            images: [],
+            sources: [],
+          });
+        }
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
       }
+    },
+    cancel() {
+      // Cliente abortó; el AbortSignal del request corta ensureChatModel/compose.
     },
   });
 }
