@@ -99,9 +99,18 @@ test("investigar define perrera con significados y ejemplos", async () => {
 });
 
 test("buildDefinitionDraft estructura una definición desde fuentes", async () => {
-  const { buildDefinitionDraft, looksLikeDefinitionQuery } = await import("../lib/tools/research");
+  const { buildDefinitionDraft, looksLikeDefinitionQuery, isUsableDefinitionSentence } = await import(
+    "../lib/tools/research"
+  );
   assert.equal(looksLikeDefinitionQuery("Perrera"), true);
   assert.equal(looksLikeDefinitionQuery("razas de perros muy pequeños en zoológico"), false);
+  assert.equal(
+    isUsableDefinitionSentence(
+      "n su territorio se encuentran tres bienes culturales de los treinta y cinco sitios Patrimonio de la Humanidad",
+      "casa",
+    ),
+    false,
+  );
   const draft = buildDefinitionDraft("canil", [
     {
       score: 0.5,
@@ -113,10 +122,21 @@ test("buildDefinitionDraft estructura una definición desde fuentes", async () =
         index: 0,
       },
     },
+    {
+      score: 0.2,
+      chunk: {
+        id: "2",
+        documentId: "d2",
+        title: "México",
+        text: "n su territorio se encuentran tres bienes culturales de los treinta y cinco sitios Patrimonio de la Humanidad con los que cuenta el país.",
+        index: 1,
+      },
+    },
   ]);
   assert.match(draft, /\*\*Canil\*\*/);
   assert.match(draft, /Significados y usos principales/);
   assert.doesNotMatch(draft, /Qué dicen las fuentes/);
+  assert.doesNotMatch(draft, /Patrimonio de la Humanidad|n su territorio/i);
 });
 
 test("buildResearchDraft arma secciones con fuentes", async () => {

@@ -141,12 +141,14 @@ export function buildResearchDraft(
   const heading = cleanQuestionHeading(question);
   const sections: string[] = heading ? [`**${heading}**`, ""] : [];
 
+  const queryTerms = tokenizeQuery(question);
   const useful = hits
+    .filter((hit) => hitLooksRelevant(hit, queryTerms))
     .map((hit) => ({
       title: cleanHitTitle(hit.chunk.title, hit.chunk.source),
       text: cleanHitText(hit.chunk.text),
     }))
-    .filter((item) => item.text.length > 40)
+    .filter((item) => item.text.length > 40 && !/^[a-záéíóúüñ]\s/.test(item.text.trim()))
     .slice(0, 6);
 
   if (useful.length) {
@@ -182,14 +184,20 @@ export function buildDefinitionDraft(
     return [`**${heading}**`, "", known.body].join("\n");
   }
 
-  const sentences = hits
+  const relevantHits = hits.filter((hit) => hitMentionsTerm(hit, term));
+  const sentences = relevantHits
     .flatMap((hit) => splitUsefulSentences(cleanHitText(hit.chunk.text)))
-    .filter((sentence) => sentence.length > 35 && !isDictionaryNoise(sentence));
+    .filter((sentence) => isUsableDefinitionSentence(sentence, term));
   const unique = dedupeSentences(sentences).slice(0, 8);
   if (!unique.length) return "";
 
   const lead =
-    unique.find((sentence) => /\bes\s+un[a]?\b|\bse\s+trata\s+de\b|\blugar\b|\binstalaci[oó]n\b/i.test(sentence)) ||
+    unique.find((sentence) =>
+      new RegExp(`\\b${escapeRegExp(term)}\\b.{0,40}\\b(es|son|designa|significa|se\\s+refiere)\\b`, "i").test(
+        sentence,
+      ),
+    ) ||
+    unique.find((sentence) => /\bes\s+un[a]?\b|\bse\s+trata\s+de\b|\bsignifica\b/i.test(sentence)) ||
     unique[0];
   const meanings = unique.filter((sentence) => sentence !== lead).slice(0, 4);
   const examples = unique
@@ -203,9 +211,7 @@ export function buildDefinitionDraft(
     "",
     "**Significados y usos principales**",
     "",
-    ...(meanings.length
-      ? meanings.map((sentence) => `- ${sentence}`)
-      : [`- ${lead}`]),
+    ...(meanings.length ? meanings.map((sentence) => `- ${sentence}`) : [`- ${lead}`]),
   ];
 
   if (examples.length) {
@@ -247,6 +253,107 @@ function splitUsefulSentences(text: string): string[] {
     .map((part) => part.trim())
     .filter(Boolean);
 }
+
+export function isUsableDefinitionSentence(sentence: string, term: string): boolean {
+  if (sentence.length < 40) return false;
+  if (isDictionaryNoise(sentence)) return false;
+  if (isTruncatedSentence(sentence)) return false;
+  if (!sentenceMentionsTerm(sentence, term)) return false;
+  return true;
+}
+
+function isTruncatedSentence(sentence: string): boolean {
+  const text = sentence.trim();
+  // Empieza a mitad de palabra: "n su territorio…"
+  if (/^[a-záéíóúüñ]\s/.test(text)) return true;
+  // Las definiciones útiles suelen empezar en mayúscula o comilla.
+  if (!/^[A-ZÁÉÍÓÚÜÑ¿¡«"“0-9]/.test(text)) return true;
+  // Corte típico de scrapes al final.
+  if (/\b(el|la|los|las|de|del|con|para|y|o|un|una)\s*$/i.test(text) && text.length < 120) {
+    return true;
+  }
+  return false;
+}
+
+function sentenceMentionsTerm(sentence: string, term: string): boolean {
+  const t = normalizeText(term);
+  if (t.length < 3) return false;
+  const s = normalizeText(sentence);
+  if (s.includes(t)) return true;
+  const stem = t.replace(/(ciones|cion|ades|osos|osas|ares|eres|as|os|es|a|o|s)$/i, "");
+  return stem.length >= 4 && s.includes(stem);
+}
+
+function hitMentionsTerm(hit: RagHit, term: string): boolean {
+  const blob = `${hit.chunk.title} ${hit.chunk.text}`;
+  return sentenceMentionsTerm(blob, term);
+}
+
+function tokenizeQuery(question: string): string[] {
+  return normalizeText(question)
+    .split(/\s+/)
+    .map((token) => token.replace(/[^a-z0-9áéíóúüñ]/gi, ""))
+    .filter((token) => token.length >= 3)
+    .filter((token) => !STOP_WORDS.has(token));
+}
+
+function hitLooksRelevant(hit: RagHit, terms: string[]): boolean {
+  if (!terms.length) return true;
+  const blob = normalizeText(`${hit.chunk.title} ${hit.chunk.text}`);
+  const matched = terms.filter((term) => {
+    if (blob.includes(term)) return true;
+    const stem = term.replace(/(ciones|cion|ades|osos|osas|ares|eres|as|os|es|a|o|s)$/i, "");
+    return stem.length >= 4 && blob.includes(stem);
+  }).length;
+  // Con varias palabras basta 1 coincidencia fuerte; evita tirar fuentes útiles.
+  return matched >= 1;
+}
+
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const STOP_WORDS = new Set([
+  "que",
+  "qué",
+  "es",
+  "una",
+  "uno",
+  "unos",
+  "unas",
+  "los",
+  "las",
+  "del",
+  "con",
+  "por",
+  "para",
+  "como",
+  "sobre",
+  "entre",
+  "desde",
+  "donde",
+  "cual",
+  "cuales",
+  "este",
+  "esta",
+  "estos",
+  "estas",
+  "tiene",
+  "tienen",
+  "hay",
+  "the",
+  "and",
+  "for",
+]);
 
 function isDictionaryNoise(sentence: string): boolean {
   return (
