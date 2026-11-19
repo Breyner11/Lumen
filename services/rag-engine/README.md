@@ -1,26 +1,29 @@
-# Motor RAG + Visión + SymPy (Python)
+# Motor RAG + Visión + SymPy + Aprendizaje (Python)
 
-| Nueva función | Herramienta | Por qué |
-|---|---|---|
-| Leer imágenes y fórmulas | Ollama + Qwen2.5-VL / Llama-3.2-Vision | Entiende apuntes y símbolos sin internet |
-| Cálculo matemático exacto | SymPy | Álgebra y cálculo sin errores de IA |
-| Especialista en matemáticas | Qwen2.5-Math (Ollama) | Ayuda a traducir enunciados difíciles a SymPy |
-| Guardar imágenes | SQLite + caption (CLIP opcional) | Busca fotos por contenido (“gráfica de parábola”) |
-| Web | DuckDuckGo | Contexto teórico en tiempo real |
+Límite de RAM (~8 GB): todas las llamadas a Ollama llevan `keep_alive: 0`, `num_ctx: 4096`, `num_thread: 4`.
+
+| Función | Herramienta |
+|---|---|
+| Chat / razonamiento | `deepseek-r1:1.5b` |
+| Visión | `qwen2.5vl:3b` |
+| Embeddings | `nomic-embed-text` |
+| Cálculo exacto | SymPy |
+| Audio | faster-whisper `base` int8 |
+| YouTube / GitHub / DOI | youtube-transcript-api, GitHub API, Crossref/ArXiv/pypdf |
+| Web | DuckDuckGo |
 
 ## Arranque
 
 ```sh
 pip install -r requirements.txt
-ollama pull qwen2.5-vl:3b
-ollama pull qwen2.5-math:1.5b
 ollama pull nomic-embed-text
+ollama pull qwen2.5vl:3b
+ollama pull deepseek-r1:1.5b
 python app.py
 ```
 
 API útil:
 
-- `POST /math/solve` — problema en texto/LaTeX → SymPy
-- `POST /vision/read` — imagen → texto + LaTeX
-- `POST /vision/solve` — imagen → LaTeX → SymPy → memoria
-- `POST /images/search` — busca imágenes por texto
+- `POST /math/solve`, `/vision/solve`, `/audio/transcribe`
+- `POST /links/analyze`, `/learn/now`, `/images/search`
+- `POST /query` (también indexa resúmenes web bajo demanda)

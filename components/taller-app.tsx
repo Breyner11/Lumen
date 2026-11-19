@@ -14,6 +14,7 @@ import {
   Library,
   ListChecks,
   MessageCircle,
+  Mic,
   Palette,
   PanelRight,
   PenLine,
@@ -21,8 +22,10 @@ import {
   Search,
   Square,
   Trash2,
+  Wifi,
 } from "lucide-react";
 import { ACTIVITIES, ACTIVITY_MAP, MODEL_LABEL } from "@/lib/activities";
+import { syncLessonToEngine } from "@/lib/rag/sync-lesson";
 import { looksLikeMath, SPECIALTY_IDS } from "@/lib/tools/route";
 import { formatHistoryTime, pushHistory, sanitizeHistory, type HistoryEntry } from "@/lib/history";
 import {
@@ -116,6 +119,7 @@ export function TallerApp() {
   const [correctionDraft, setCorrectionDraft] = useState("");
   const [learnNote, setLearnNote] = useState("");
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const audioInputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const current = ACTIVITY_MAP[activity];
@@ -217,16 +221,89 @@ export function TallerApp() {
     const q = question.trim();
     const a = answer.trim();
     if (!q || !a) return;
-    setLessons((current) =>
-      upsertLesson(current, {
-        activity,
-        question: q,
-        answer: a,
-        reason: reason ?? "Corrección del usuario",
-      }),
+    const nextLessons = upsertLesson(lessons, {
+      activity,
+      question: q,
+      answer: a,
+      reason: reason ?? "Corrección del usuario",
+    });
+    setLessons(nextLessons);
+    const saved = nextLessons.find(
+      (lesson) => lesson.activity === activity && lesson.question.trim() === q,
     );
-    setLearnNote("Guardé la corrección. La próxima vez que preguntes lo mismo, usaré esa respuesta.");
+    if (saved) void syncLessonToEngine(saved);
+    setLearnNote("Guardé la corrección en el navegador y en el motor RAG.");
     window.setTimeout(() => setLearnNote(""), 5000);
+  }
+
+  async function learnFromInternetNow() {
+    setLearnNote("Aprendiendo de internet…");
+    try {
+      const response = await fetch("/api/learn/now", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const json = (await response.json()) as { ok?: boolean; count?: number; error?: string };
+      setLearnNote(
+        json.ok
+          ? `Indexé ${json.count ?? 0} resumen${(json.count ?? 0) === 1 ? "" : "es"} de la web.`
+          : json.error || "Sin internet o motor apagado.",
+      );
+    } catch (caught) {
+      setLearnNote(caught instanceof Error ? caught.message : "No pude aprender ahora.");
+    }
+    window.setTimeout(() => setLearnNote(""), 6000);
+  }
+
+  async function transcribeAudio(file: File) {
+    if (streaming) return;
+    setError("");
+    setLearnNote("Transcribiendo audio…");
+    try {
+      const body = new FormData();
+      body.append("file", file, file.name || "audio.webm");
+      const response = await fetch("/api/audio/transcribe", { method: "POST", body });
+      const json = (await response.json()) as { text?: string; error?: string };
+      if (!response.ok || !json.text) {
+        setError(json.error || "No pude transcribir el audio.");
+        setLearnNote("");
+        return;
+      }
+      setDraft((current) => (current ? `${current}\n${json.text}` : json.text!));
+      setLearnNote("Audio pasado a texto. Revísalo y envía.");
+      window.setTimeout(() => setLearnNote(""), 4000);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Falló la transcripción.");
+      setLearnNote("");
+    }
+  }
+
+  async function recordAndTranscribe() {
+    if (streaming || typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      audioInputRef.current?.click();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        void transcribeAudio(new File([blob], "nota-voz.webm", { type: blob.type }));
+      };
+      setLearnNote("Grabando 5 s… habla ahora.");
+      recorder.start();
+      window.setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+      }, 5000);
+    } catch {
+      audioInputRef.current?.click();
+    }
   }
 
   function markGood(assistantIndex: number) {
@@ -592,6 +669,15 @@ export function TallerApp() {
             Conocimiento RAG
             {documents.length > 0 && <Badge className="ml-auto" variant="secondary">{documents.length}</Badge>}
           </Button>
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            disabled={streaming}
+            onClick={() => void learnFromInternetNow()}
+          >
+            <Wifi />
+            Aprender de Internet ahora
+          </Button>
         </div>
       </aside>
 
@@ -750,6 +836,27 @@ export function TallerApp() {
                 if (file) void solveImage(file);
               }}
             />
+            <input
+              ref={audioInputRef}
+              type="file"
+              accept="audio/*,.webm,.wav,.mp3,.m4a,.ogg"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (file) void transcribeAudio(file);
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-lg"
+              aria-label="Grabar o subir audio"
+              disabled={streaming}
+              onClick={() => void recordAndTranscribe()}
+            >
+              <Mic />
+            </Button>
             {(activity === "preguntar" ||
               activity === "calcular" ||
               activity === "investigar" ||

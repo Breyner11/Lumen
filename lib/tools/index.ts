@@ -1,9 +1,11 @@
 import type { ActivityId } from "@/lib/types";
 import { reviewCode } from "@/lib/tools/code";
+import { handleDailyLife, handleEmergency, handleProject } from "@/lib/tools/everyday";
+import { analyzeAndLearnLink, extractUrls, formatLinkAnswer } from "@/lib/tools/links";
 import { solveMath } from "@/lib/tools/math";
 import { organizePlan } from "@/lib/tools/plan";
 import { researchBrief } from "@/lib/tools/research";
-import { detectIntent, intentLabel } from "@/lib/tools/route";
+import { detectIntent, intentLabel, isSpecialtyIntent } from "@/lib/tools/route";
 import { studySession } from "@/lib/tools/study";
 import { summarizeText } from "@/lib/tools/summarize";
 import { prepareTranslation } from "@/lib/tools/translate";
@@ -13,20 +15,61 @@ export type ToolResult = {
   applicable: boolean;
   answer: string;
   notes: string;
-  routedTo?: ActivityId;
+  routedTo?: string;
 };
 
 export async function runActivity(activity: ActivityId, input: string): Promise<ToolResult> {
   if (activity === "preguntar") {
     const routed = detectIntent(input);
-    const result = await runActivity(routed, input);
-    const badge = `_Herramienta: ${intentLabel(routed)}_`;
-    return {
-      applicable: result.applicable,
-      answer: `${badge}\n\n${result.answer}`,
-      notes: result.notes,
-      routedTo: routed,
-    };
+    if (routed === "emergencia") {
+      const result = await handleEmergency(input);
+      return { ...result, routedTo: routed };
+    }
+    if (routed === "cotidiano") {
+      const result = await handleDailyLife(input);
+      return { ...result, routedTo: routed };
+    }
+    if (routed === "proyecto") {
+      const result = await handleProject(input);
+      return { ...result, routedTo: routed };
+    }
+    if (routed === "enlace") {
+      const url = extractUrls(input)[0];
+      if (!url) {
+        return {
+          applicable: false,
+          answer: "No encontré un enlace válido.",
+          notes: "",
+          routedTo: routed,
+        };
+      }
+      const analyzed = await analyzeAndLearnLink(url);
+      if (!analyzed) {
+        return {
+          applicable: false,
+          answer:
+            "El motor Python no está disponible para analizar el enlace. Arranca `npm run rag:engine`.",
+          notes: "",
+          routedTo: routed,
+        };
+      }
+      return {
+        applicable: analyzed.ok,
+        answer: formatLinkAnswer(analyzed),
+        notes: analyzed.text?.slice(0, 1500) || "",
+        routedTo: routed,
+      };
+    }
+    if (isSpecialtyIntent(routed)) {
+      const result = await runActivity(routed, input);
+      const badge = `_Herramienta: ${intentLabel(routed)}_`;
+      return {
+        applicable: result.applicable,
+        answer: result.answer.includes("Herramienta:") ? result.answer : `${badge}\n\n${result.answer}`,
+        notes: result.notes,
+        routedTo: routed,
+      };
+    }
   }
 
   switch (activity) {
@@ -51,6 +94,8 @@ export async function runActivity(activity: ActivityId, input: string): Promise<
     case "resumir":
       return summarizeText(input);
     case "investigar":
+      return researchBrief(input);
+    case "preguntar":
       return researchBrief(input);
   }
 }

@@ -114,3 +114,47 @@ export async function engineQuery(
     return null;
   }
 }
+
+export async function engineLearnNow(options?: {
+  topics?: string[];
+  maxTopics?: number;
+}): Promise<{ ok: boolean; count?: number; error?: string } | null> {
+  try {
+    const response = await fetch(`${ragEngineUrl()}/learn/now`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        topics: options?.topics,
+        max_topics: options?.maxTopics ?? 3,
+      }),
+      signal: AbortSignal.timeout(90_000),
+      cache: "no-store",
+    });
+    const json = (await response.json()) as { ok?: boolean; count?: number; error?: string };
+    if (!response.ok) return { ok: false, error: json.error || "No pude aprender ahora." };
+    return { ok: Boolean(json.ok), count: json.count, error: json.error };
+  } catch {
+    return null;
+  }
+}
+
+export async function engineRememberLesson(lesson: {
+  id: string;
+  activity: string;
+  question: string;
+  answer: string;
+  reason?: string;
+}): Promise<boolean> {
+  try {
+    const response = await fetch(`${ragEngineUrl()}/lessons`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(lesson),
+      signal: AbortSignal.timeout(30_000),
+      cache: "no-store",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}

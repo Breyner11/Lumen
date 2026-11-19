@@ -26,6 +26,7 @@ from ddgs import DDGS
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from audio_transcribe import transcribe_audio_bytes
 from images import (
     ensure_image_tables,
     find_similar_math,
@@ -34,17 +35,31 @@ from images import (
     save_image_file,
     search_images,
 )
+from learn import (
+    DEFAULT_TOPICS,
+    build_learning_document,
+    internet_ok,
+    load_interest_topics,
+    remember_user_query_topic,
+    save_interest_topics,
+    search_snippets,
+)
+from links import analyze_link
 from math_solver import solve_math_text
+from ollama_opts import with_ollama_limits
 from vision import list_ollama_models, pick_vision_model, read_image
 
 DATA_DIR = Path(os.environ.get("TALLER_RAG_DATA", Path(__file__).resolve().parent / "data"))
 DB_PATH = DATA_DIR / "taller-rag.sqlite"
 IMAGES_DIR = DATA_DIR / "images"
+TOPICS_PATH = DATA_DIR / "interest-topics.json"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "qwen2.5-vl:3b")
-MATH_MODEL = os.environ.get("OLLAMA_MATH_MODEL", "qwen2.5-math:1.5b")
+VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "qwen2.5vl:3b")
+CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "deepseek-r1:1.5b")
+MATH_MODEL = os.environ.get("OLLAMA_MATH_MODEL", "deepseek-r1:1.5b")
 ENGINE_PORT = int(os.environ.get("RAG_ENGINE_PORT", "8765"))
+LEARN_INTERVAL_SEC = int(os.environ.get("TALLER_LEARN_INTERVAL_SEC", str(30 * 60)))
 
 STOPWORDS = {
     "a", "al", "de", "del", "el", "la", "los", "las", "un", "una", "y", "o", "en", "por", "para",
@@ -187,7 +202,7 @@ async def embed_texts(texts: list[str]) -> tuple[list[list[float]] | list[dict[s
             for text in texts:
                 response = await client.post(
                     f"{OLLAMA_URL}/api/embeddings",
-                    json={"model": EMBED_MODEL, "prompt": text},
+                    json=with_ollama_limits({"model": EMBED_MODEL, "prompt": text}),
                 )
                 if response.status_code != 200:
                     break
@@ -199,6 +214,34 @@ async def embed_texts(texts: list[str]) -> tuple[list[list[float]] | list[dict[s
             else:
                 return vectors, f"ollama:{EMBED_MODEL}"
     return [tf_vector(text) for text in texts], "tfidf-fallback"
+
+
+async def index_learning_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    body = IndexRequest(
+        id=doc["id"],
+        title=doc["title"],
+        text=doc["text"],
+        source=doc.get("source") or "aprendizaje-web",
+    )
+    return await index_document(body)
+
+
+async def learn_topics(topics: list[str], max_topics: int = 3) -> dict[str, Any]:
+    if not internet_ok():
+        return {"ok": False, "error": "Sin internet: no aprendo ahora.", "indexed": []}
+    indexed: list[str] = []
+    for topic in topics[:max_topics]:
+        try:
+            hits = search_snippets(topic, 4)
+            if not hits:
+                continue
+            doc = build_learning_document(topic, hits)
+            await index_learning_doc(doc)
+            indexed.append(doc["id"])
+            remember_user_query_topic(TOPICS_PATH, topic)
+        except Exception:
+            continue
+    return {"ok": True, "indexed": indexed, "count": len(indexed)}
 
 
 def dense_cosine(a: list[float], b: list[float]) -> float:
@@ -232,9 +275,12 @@ async def health() -> dict[str, Any]:
         "ollama": ollama,
         "embed_model": EMBED_MODEL if ollama else "tfidf-fallback",
         "vision_model": vision,
+        "chat_model": CHAT_MODEL if ollama else None,
         "math_model": MATH_MODEL if ollama else None,
         "sympy": True,
         "search": "duckduckgo",
+        "internet": internet_ok(),
+        "learn_interval_sec": LEARN_INTERVAL_SEC,
         "models": models[:20],
     }
 
@@ -437,6 +483,63 @@ async def images_search(body: ImageSearchRequest) -> dict[str, Any]:
     return {"query": body.query, "hits": hits}
 
 
+class LearnRequest(BaseModel):
+    topics: list[str] | None = None
+    max_topics: int = Field(default=3, ge=1, le=8)
+
+
+@app.post("/learn/now")
+async def learn_now(body: LearnRequest) -> dict[str, Any]:
+    topics = body.topics or load_interest_topics(TOPICS_PATH) or list(DEFAULT_TOPICS)
+    result = await learn_topics(topics, body.max_topics)
+    return result
+
+
+@app.get("/learn/topics")
+async def get_learn_topics() -> dict[str, Any]:
+    return {"topics": load_interest_topics(TOPICS_PATH)}
+
+
+class TopicsRequest(BaseModel):
+    topics: list[str] = Field(default_factory=list)
+
+
+@app.post("/learn/topics")
+async def set_learn_topics(body: TopicsRequest) -> dict[str, Any]:
+    save_interest_topics(TOPICS_PATH, body.topics or list(DEFAULT_TOPICS))
+    return {"topics": load_interest_topics(TOPICS_PATH)}
+
+
+class LinkRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)
+    learn: bool = True
+
+
+@app.post("/links/analyze")
+async def links_analyze(body: LinkRequest) -> dict[str, Any]:
+    result = await analyze_link(body.url.strip())
+    if result.get("ok") and body.learn and result.get("text"):
+        doc = {
+            "id": f"link-{int(time.time())}-{abs(hash(body.url)) % 10_000}",
+            "title": result.get("title") or body.url,
+            "text": result["text"],
+            "source": f"enlace:{result.get('kind')}",
+        }
+        indexed = await index_learning_doc(doc)
+        result["indexed"] = True
+        result["document_id"] = indexed.get("id")
+    return result
+
+
+@app.post("/audio/transcribe")
+async def audio_transcribe(file: UploadFile = File(...)) -> dict[str, Any]:
+    raw = await file.read()
+    result = transcribe_audio_bytes(raw, file.filename or "audio.webm")
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result.get("error") or "No transcribí el audio.")
+    return result
+
+
 def ddg_text(query: str, max_results: int) -> list[dict[str, str]]:
     results: list[dict[str, str]] = []
     with DDGS() as ddgs:
@@ -610,6 +713,14 @@ async def query_rag(body: QueryRequest) -> dict[str, Any]:
     if body.web:
         try:
             web_results = ddg_text(body.query, 4)
+            # Aprendizaje bajo demanda: indexa resumen limpio si hay internet.
+            if web_results and internet_ok():
+                remember_user_query_topic(TOPICS_PATH, body.query)
+                doc = build_learning_document(body.query[:120], web_results)
+                try:
+                    await index_learning_doc(doc)
+                except Exception:
+                    pass
         except Exception:
             web_results = []
 
@@ -619,6 +730,25 @@ async def query_rag(body: QueryRequest) -> dict[str, Any]:
         "hits": hits,
         "web": web_results,
     }
+
+
+@app.on_event("startup")
+async def start_background_learning() -> None:
+    import asyncio
+
+    async def loop() -> None:
+        # Espera inicial para no saturar el arranque.
+        await asyncio.sleep(45)
+        while True:
+            try:
+                if internet_ok():
+                    topics = load_interest_topics(TOPICS_PATH) or list(DEFAULT_TOPICS)
+                    await learn_topics(topics, max_topics=2)
+            except Exception:
+                pass
+            await asyncio.sleep(LEARN_INTERVAL_SEC)
+
+    asyncio.create_task(loop())
 
 
 def main() -> None:

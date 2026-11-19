@@ -63,8 +63,15 @@ export async function POST(request: Request) {
     return Response.json({ error: parsed.error }, { status: 400 });
   }
 
-  const modelReady = Boolean(process.env.DEEPSEEK_API_KEY);
-  const stream = modelReady ? modelStream(parsed, request.signal) : await tallerStream(parsed);
+  const { ollamaAvailable } = await import("@/lib/ollama");
+  const localOllama = await ollamaAvailable(request.signal);
+  const cloudReady = Boolean(process.env.DEEPSEEK_API_KEY);
+  // Prioridad: Ollama local (deepseek-r1:1.5b, RAM limitada) → API cloud → herramientas taller.
+  const stream = localOllama
+    ? ollamaStream(parsed, request.signal)
+    : cloudReady
+      ? modelStream(parsed, request.signal)
+      : await tallerStream(parsed);
   return new Response(stream, {
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
@@ -90,6 +97,67 @@ async function tallerStream(request: ChatRequest): Promise<ReadableStream<Uint8A
         }),
       );
       controller.close();
+    },
+  });
+}
+
+function ollamaStream(request: ChatRequest, signal: AbortSignal): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    async start(controller) {
+      try {
+        const { OLLAMA_CHAT_MODEL, OLLAMA_URL, splitThink, withOllamaLimits } = await import("@/lib/ollama");
+        const composed = await composeConversation({ ...request, now: new Date() });
+        // Si las herramientas ya resolvieron (math/emergency/etc.), sirve eso y deja que R1 solo razone si hace falta.
+        if (composed.answer && !request.thinking) {
+          for (const part of chunk(composed.answer, 80)) controller.enqueue(sse({ type: "content", text: part }));
+          controller.enqueue(sse({ type: "done", mode: "taller", model: OLLAMA_CHAT_MODEL, ragHits: composed.ragHits ?? 0 }));
+          controller.close();
+          return;
+        }
+        const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            withOllamaLimits({
+              model: OLLAMA_CHAT_MODEL,
+              stream: false,
+              messages: composed.messages.map((m) => ({ role: m.role, content: m.content })),
+            }),
+          ),
+          signal: AbortSignal.any([AbortSignal.timeout(120_000), signal]),
+          cache: "no-store",
+        });
+        if (!upstream.ok) {
+          // Fallback a herramientas locales.
+          for (const part of chunk(composed.answer || "No pude usar Ollama; usé las herramientas locales.", 80)) {
+            controller.enqueue(sse({ type: "content", text: part }));
+          }
+          controller.enqueue(sse({ type: "done", mode: "taller", model: OLLAMA_CHAT_MODEL }));
+          controller.close();
+          return;
+        }
+        const json = (await upstream.json()) as { message?: { content?: string; thinking?: string } };
+        const raw = (json.message?.content || "").trim() || composed.answer;
+        const split = splitThink(raw);
+        const thinking = json.message?.thinking || split.thinking;
+        if (thinking) controller.enqueue(sse({ type: "reasoning", text: thinking }));
+        const finalText = thinking && !split.content.includes("<think>")
+          ? `<think>${thinking}</think>\n\n${split.content || composed.answer}`
+          : split.content || composed.answer;
+        for (const part of chunk(finalText, 80)) controller.enqueue(sse({ type: "content", text: part }));
+        controller.enqueue(sse({ type: "done", mode: "taller", model: OLLAMA_CHAT_MODEL, ragHits: composed.ragHits ?? 0 }));
+        controller.close();
+      } catch {
+        if (signal.aborted) {
+          controller.close();
+          return;
+        }
+        const composed = await composeConversation({ ...request, now: new Date() }).catch(() => null);
+        const text = composed?.answer || "No pude hablar con Ollama. Revisa que esté en marcha.";
+        for (const part of chunk(text, 80)) controller.enqueue(sse({ type: "content", text: part }));
+        controller.enqueue(sse({ type: "done", mode: "taller", model: "taller" }));
+        controller.close();
+      }
     },
   });
 }

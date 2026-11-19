@@ -8,8 +8,12 @@ from typing import Any
 
 import httpx
 
+from ollama_opts import with_ollama_limits
+
 DEFAULT_VISION_MODELS = [
+    "qwen2.5vl:3b",
     "qwen2.5-vl:3b",
+    "qwen2.5vl",
     "qwen2.5-vl",
     "llama3.2-vision",
     "llama3.2-vision:11b",
@@ -70,17 +74,19 @@ async def read_image(
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
                 f"{ollama_url.rstrip('/')}/api/chat",
-                json={
-                    "model": model,
-                    "stream": False,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": instruction,
-                            "images": [b64],
-                        }
-                    ],
-                },
+                json=with_ollama_limits(
+                    {
+                        "model": model,
+                        "stream": False,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": instruction,
+                                "images": [b64],
+                            }
+                        ],
+                    }
+                ),
             )
             if response.status_code != 200:
                 return {

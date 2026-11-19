@@ -1,6 +1,6 @@
 # Taller
 
-Un solo chat (**Preguntar**) que enruta solo: calcula, investiga, estudia, programa, escribe, organiza, traduce o resume según lo que digas. Los ocho oficios siguen disponibles como especialidades. Armado sobre [deepseek-recipe](https://github.com/deepseek-ai/deepseek-recipe).
+Asistente todoterreno en un solo chat (**Preguntar**): calcula, investiga, estudia, programa, escribe, organiza, traduce, resume, atiende emergencias/vida diaria/proyectos, lee fotos, transcribe audio y analiza YouTube/GitHub/DOI. Aprende de internet en local (máx. ~8 GB RAM con Ollama). Armado sobre [deepseek-recipe](https://github.com/deepseek-ai/deepseek-recipe).
 
 Al abrir la app verás **Bienvenido** y **¿En qué te puedo ayudar hoy?** Hay seis interfaces (Brisa, Tinta, Solar, Noche, Coral, Bosque) y un historial de lo que buscaste.
 
@@ -48,10 +48,10 @@ Documentos / lecciones / DuckDuckGo + bases académicas
 ### Modo autónomo en tu PC
 
 ```sh
-# 1) modelos locales (opcional pero recomendado)
+# 1) modelos locales (≤8 GB RAM)
 ollama pull nomic-embed-text
-ollama pull qwen2.5-vl:3b
-ollama pull qwen2.5-math:1.5b
+ollama pull qwen2.5vl:3b
+ollama pull deepseek-r1:1.5b
 
 # 2) motor Python
 npm run rag:install
@@ -61,7 +61,13 @@ npm run rag:engine
 npm run dev
 ```
 
-Si el motor Python no está arriba, la app sigue con el RAG TypeScript + DuckDuckGo y las bases verificables. Sin Ollama visión no podrá leer fotos, pero SymPy sí resuelve problemas escritos.
+Comando rápido de prueba (con Ollama ya instalado):
+
+```sh
+npm run rag:install && npm run rag:engine & npm run dev
+```
+
+Luego abre `http://127.0.0.1:3847`. Todas las llamadas a Ollama usan `keep_alive: 0`, `num_ctx: 4096` y `num_thread: 4`.
 
 ## Uso local
 

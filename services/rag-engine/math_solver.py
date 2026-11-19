@@ -18,7 +18,7 @@ from sympy.parsing.sympy_parser import (
 TRANSFORMATIONS = standard_transformations + (implicit_multiplication_application,)
 
 
-def solve_math_text(text: str, ollama_url: str = "", math_model: str = "qwen2.5-math:1.5b") -> dict[str, Any]:
+def solve_math_text(text: str, ollama_url: str = "", math_model: str = "deepseek-r1:1.5b") -> dict[str, Any]:
     cleaned = text.strip()
     if not cleaned:
         return {"ok": False, "error": "Falta la expresión o el problema."}
@@ -375,10 +375,12 @@ def ask_math_model(problem: str, ollama_url: str, model: str) -> dict[str, Any]:
         f"Problema: {problem}"
     )
     try:
+        from ollama_opts import with_ollama_limits
+
         with httpx.Client(timeout=60.0) as client:
             response = client.post(
                 f"{ollama_url.rstrip('/')}/api/generate",
-                json={"model": model, "prompt": prompt, "stream": False},
+                json=with_ollama_limits({"model": model, "prompt": prompt, "stream": False}),
             )
             if response.status_code != 200:
                 return {"ok": False, "error": "math-model-unavailable"}

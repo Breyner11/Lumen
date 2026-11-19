@@ -18,10 +18,12 @@ export async function gatherSources(question: string): Promise<SourceHit[]> {
   const query = searchQuery(question) || question.trim();
   if (query.length < 2) return [];
 
+  // Web general primero (noticias, cultura, tecnología, vida diaria) + bases académicas.
   const settled = await Promise.allSettled([
+    fromDuckDuckGo(query),
+    fromDuckDuckGoNews(query),
     fromWikipedia(question),
     fromWikidata(query),
-    fromDuckDuckGo(query),
     fromOpenAlex(query),
     fromCrossref(query),
     fromEuropePmc(query),
@@ -38,11 +40,28 @@ export async function gatherSources(question: string): Promise<SourceHit[]> {
 }
 
 async function fromDuckDuckGo(query: string): Promise<SourceHit[]> {
-  const results = await searchWeb(query, 5);
+  const results = await searchWeb(query, 6);
   return results
     .filter((item) => item.title && (item.snippet || item.url))
     .map((item) => ({
       source: "DuckDuckGo",
+      title: item.title,
+      summary: item.snippet || item.title,
+      url: item.url || "https://duckduckgo.com/",
+      kind: "web" as const,
+    }));
+}
+
+async function fromDuckDuckGoNews(query: string): Promise<SourceHit[]> {
+  // Misma vía DDG con sesgo a actualidad / vida diaria.
+  const newsQuery = /noticia|news|hoy|actual|mundo|tecnolog|salud|cultura/i.test(query)
+    ? query
+    : `${query} noticias actualidad`;
+  const results = await searchWeb(newsQuery, 4);
+  return results
+    .filter((item) => item.title && (item.snippet || item.url))
+    .map((item) => ({
+      source: "DuckDuckGo · actualidad",
       title: item.title,
       summary: item.snippet || item.title,
       url: item.url || "https://duckduckgo.com/",

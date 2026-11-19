@@ -1,4 +1,5 @@
 import type { ActivityId } from "@/lib/types";
+import { extractUrls } from "@/lib/tools/links";
 
 /** Oficios especializados (sin el chat unificado). */
 export const SPECIALTY_IDS = [
@@ -14,7 +15,10 @@ export const SPECIALTY_IDS = [
 
 export type SpecialtyId = (typeof SPECIALTY_IDS)[number];
 
-const LABELS: Record<SpecialtyId, string> = {
+/** Intenciones del chat unificado (incluye cotidianas). */
+export type IntentId = SpecialtyId | "emergencia" | "cotidiano" | "proyecto" | "enlace";
+
+const LABELS: Record<IntentId, string> = {
   estudiar: "Estudiar",
   programar: "Programar",
   escribir: "Escribir",
@@ -23,17 +27,49 @@ const LABELS: Record<SpecialtyId, string> = {
   traducir: "Traducir",
   resumir: "Resumir",
   investigar: "Investigar",
+  emergencia: "Emergencia",
+  cotidiano: "Vida diaria",
+  proyecto: "Proyecto",
+  enlace: "Enlace",
 };
 
 /**
- * Elige el oficio según la pregunta. Prioriza señales claras
- * (código, ecuación, traducción…) y cae en Investigar para dudas abiertas.
+ * Elige la intención según la pregunta. Prioriza señales claras
+ * (emergencia, enlace, código, ecuación…) y cae en Investigar para dudas abiertas.
  */
-export function detectIntent(input: string): SpecialtyId {
+export function detectIntent(input: string): IntentId {
   const text = input.trim();
   const lower = text.toLowerCase();
 
   if (!text) return "investigar";
+
+  if (extractUrls(text).length > 0) {
+    return "enlace";
+  }
+
+  if (
+    /\b(emergencia|incendio|fuego|humo|primeros\s+auxilios|ahog|atragant|hemorrag|sangrado\s+abundante|rcp|paro\s+card)/i.test(
+      lower,
+    )
+  ) {
+    return "emergencia";
+  }
+
+  if (
+    /\b(plan\s+para|c[oó]mo\s+(?:hacer|montar|armar|construir|implementar)|proyecto|gu[ií]a\s+paso|roadmap|fases)\b/i.test(
+      lower,
+    )
+  ) {
+    return "proyecto";
+  }
+
+  if (
+    /\b(resaca|remedio|gripa|resfriado|dolor\s+de\s+cabeza|cocina|receta|hogar|limpiar|mancha|salud|tos|fiebre|quemadura\s+leve)\b/i.test(
+      lower,
+    )
+  ) {
+    return "cotidiano";
+  }
 
   if (
     /```/.test(text) ||
@@ -53,10 +89,7 @@ export function detectIntent(input: string): SpecialtyId {
     return "traducir";
   }
 
-  if (
-    /\b(resum(?:e|ir|en)|sintetiza|ideas\s+clave)\b/i.test(lower) &&
-    text.length > 180
-  ) {
+  if (/\b(resum(?:e|ir|en)|sintetiza|ideas\s+clave)\b/i.test(lower) && text.length > 180) {
     return "resumir";
   }
   if (text.length > 450 && !/[?]/.test(text) && !/\b(qu[eé]|c[oó]mo|por\s+qu[eé]|d[oó]nde)\b/i.test(lower)) {
@@ -95,7 +128,7 @@ export function detectIntent(input: string): SpecialtyId {
   }
 
   if (
-    /\b(qu[eé]\s+es|qui[eé]n\s+es|d[oó]nde|cu[aá]ndo|por\s+qu[eé]|investiga|busca|fuentes|wikipedia|seg[uú]n)\b/i.test(
+    /\b(qu[eé]\s+es|qui[eé]n\s+es|d[oó]nde|cu[aá]ndo|por\s+qu[eé]|investiga|busca|fuentes|wikipedia|noticia|noticias|cultura|tecnolog)/i.test(
       lower,
     ) ||
     /\?$/.test(text.trim())
@@ -103,7 +136,6 @@ export function detectIntent(input: string): SpecialtyId {
     return "investigar";
   }
 
-  // Texto corto suelto → investigar; párrafo sin pregunta → escribir/revisar si parece prosa.
   if (text.length > 220 && /[.!]/.test(text) && !/\d\s*[+\-*/=]/.test(text)) {
     return "escribir";
   }
@@ -111,8 +143,12 @@ export function detectIntent(input: string): SpecialtyId {
   return "investigar";
 }
 
-export function intentLabel(id: SpecialtyId): string {
+export function intentLabel(id: IntentId): string {
   return LABELS[id];
+}
+
+export function isSpecialtyIntent(id: IntentId): id is SpecialtyId {
+  return (SPECIALTY_IDS as readonly string[]).includes(id);
 }
 
 export function looksLikeMath(text: string, lower = text.toLowerCase()): boolean {
@@ -127,7 +163,6 @@ export function looksLikeMath(text: string, lower = text.toLowerCase()): boolean
   if (/[∫∑√π]/.test(text) || /\\int|\\frac|\\sum|\$\$/.test(text)) return true;
   if (/[a-zA-Z]\s*=\s*-?\d/.test(text) || /\d\s*[a-zA-Z]\s*[+\-]=/.test(text)) return true;
   if (/=\s*-?\d/.test(text) && /[a-zA-Z]/.test(text)) return true;
-  // Expresión aritmética dominante
   const ops = (text.match(/[+\-*/^=()]/g) ?? []).length;
   const digits = (text.match(/\d/g) ?? []).length;
   if (digits >= 2 && ops >= 1 && text.length < 120) return true;

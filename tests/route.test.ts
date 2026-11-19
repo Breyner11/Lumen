@@ -9,9 +9,12 @@ test("detecta cuentas en Preguntar", () => {
   assert.equal(detectIntent("Resuelve 2x + 5 = 17"), "calcular");
 });
 
-test("detecta investigación y estudio", () => {
+test("detecta investigación, estudio, emergencia y proyecto", () => {
   assert.equal(detectIntent("¿Dónde se ubica la pirámide de Giza?"), "investigar");
   assert.equal(detectIntent("Explícame las fracciones equivalentes"), "estudiar");
+  assert.equal(detectIntent("primeros auxilios por incendio en casa"), "emergencia");
+  assert.equal(detectIntent("plan para montar un huerto en balcón"), "proyecto");
+  assert.equal(detectIntent("remedio casero para la resaca"), "cotidiano");
 });
 
 test("detecta traducir y programar", () => {

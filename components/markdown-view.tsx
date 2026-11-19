@@ -1,7 +1,29 @@
 import type { ReactNode } from "react";
 
 export function MarkdownView({ text }: { text: string }) {
-  return <div className="md-body space-y-3">{renderBlocks(text)}</div>;
+  const { thinking, content } = splitThinking(text);
+  return (
+    <div className="md-body space-y-3">
+      {thinking ? (
+        <details className="rounded-xl border border-border/80 bg-muted/40 px-3 py-2">
+          <summary className="cursor-pointer select-none text-sm font-medium text-muted-foreground">
+            Pensando…
+          </summary>
+          <div className="mt-2 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">{thinking}</div>
+        </details>
+      ) : null}
+      {renderBlocks(content)}
+    </div>
+  );
+}
+
+function splitThinking(source: string): { thinking?: string; content: string } {
+  const match = /<think>([\s\S]*?)<\/think>/i.exec(source);
+  if (!match) return { content: source };
+  return {
+    thinking: match[1]?.trim() || undefined,
+    content: source.replace(match[0], "").trim(),
+  };
 }
 
 function renderBlocks(source: string): ReactNode[] {
