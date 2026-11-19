@@ -1,6 +1,6 @@
 /** Cliente Ollama: chat con deepseek-r1:1.5b, RAM ~8 GB. */
 
-export const OLLAMA_CHAT_TIMEOUT_MS = 120_000;
+export const OLLAMA_CHAT_TIMEOUT_MS = 180_000;
 export const OLLAMA_CHAT_KEEP_ALIVE = "5m";
 
 export function ollamaUrl(): string {
@@ -15,9 +15,11 @@ export const OLLAMA_CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL?.trim() || "deeps
 export const OLLAMA_VISION_MODEL = process.env.OLLAMA_VISION_MODEL?.trim() || "qwen2.5vl:3b";
 export const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL?.trim() || "nomic-embed-text";
 
+/** Opciones rápidas: menos contexto y tope de tokens para no saturar el timeout. */
 export const OLLAMA_OPTIONS = {
-  num_ctx: 4096,
+  num_ctx: 2048,
   num_thread: 4,
+  num_predict: 450,
 } as const;
 
 export function withOllamaLimits<T extends Record<string, unknown>>(
@@ -25,7 +27,7 @@ export function withOllamaLimits<T extends Record<string, unknown>>(
   keepAlive: string | number = OLLAMA_CHAT_KEEP_ALIVE,
 ): T & {
   keep_alive: string | number;
-  options: { num_ctx: number; num_thread: number };
+  options: { num_ctx: number; num_thread: number; num_predict: number };
 } {
   return {
     ...payload,
@@ -57,9 +59,7 @@ export async function listOllamaModels(signal?: AbortSignal): Promise<string[]> 
     });
     if (!response.ok) return [];
     const json = (await response.json()) as { models?: Array<{ name?: string }> };
-    return (json.models ?? [])
-      .map((item) => item.name || "")
-      .filter(Boolean);
+    return (json.models ?? []).map((item) => item.name || "").filter(Boolean);
   } catch {
     return [];
   }
@@ -131,6 +131,8 @@ export async function ollamaChat(options: {
   /** keep_alive: "5m" en chat normal; 0 solo para liberar visión. */
   keepAlive?: string | number;
   timeoutMs?: number;
+  /** Desactiva el bloque thinking de R1 cuando el runtime lo permite. */
+  think?: boolean;
 }): Promise<{ ok: boolean; text: string; thinking?: string; model: string; error?: string }> {
   const model = options.model ?? OLLAMA_CHAT_MODEL;
   const url = ollamaUrl();
@@ -161,6 +163,8 @@ export async function ollamaChat(options: {
           {
             model,
             stream: false,
+            // deepseek-r1: acorta el razonamiento para no agotar el timeout.
+            think: options.think ?? false,
             messages,
           },
           keepAlive,
@@ -180,16 +184,23 @@ export async function ollamaChat(options: {
       response?: string;
     };
     const raw = (json.message?.content || json.response || "").trim();
-    if (!raw) {
+    const thinkingField = json.message?.thinking?.trim();
+    if (!raw && !thinkingField) {
       const error = `Ollama devolvió una respuesta vacía (${model} @ ${url})`;
       console.error("[taller/ollama]", error);
       return { ok: false, text: "", model, error };
     }
-    const split = splitThink(raw);
+    const split = splitThink(raw || "");
+    const text = split.content || extractAnswerFromThinking(thinkingField || split.thinking || "");
+    if (!text.trim()) {
+      const error = `Ollama no dejó texto útil tras razonar (${model} @ ${url})`;
+      console.error("[taller/ollama]", error);
+      return { ok: false, text: "", model, error };
+    }
     return {
       ok: true,
-      text: split.content,
-      thinking: json.message?.thinking || split.thinking,
+      text: text.trim(),
+      thinking: thinkingField || split.thinking,
       model,
     };
   } catch (caught) {
@@ -211,6 +222,17 @@ export function splitThink(text: string): { thinking?: string; content: string }
   return { thinking: thinking || undefined, content };
 }
 
+/** Si el modelo solo dejó thinking, intenta sacar la última conclusión usable. */
+function extractAnswerFromThinking(thinking: string): string {
+  const lines = thinking
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return "";
+  const last = lines.slice(-4).join(" ");
+  return last.slice(0, 600);
+}
+
 export function formatOllamaErrorForUser(error: string | undefined, model = OLLAMA_CHAT_MODEL): string {
   const detail = (error || "error desconocido").trim();
   return [
@@ -221,6 +243,6 @@ export function formatOllamaErrorForUser(error: string | undefined, model = OLLA
     "**Qué revisar:**",
     `- Que Ollama esté en marcha en \`${ollamaUrl()}\``,
     `- Que exista el modelo: \`ollama pull ${model}\``,
-    "- Espera hasta 2 minutos si el modelo se está cargando la primera vez",
+    "- Si el modelo está ocupado, espera unos segundos y vuelve a intentar",
   ].join("\n");
 }

@@ -94,22 +94,50 @@ export async function researchBrief(
     };
   }
 
+  // Preferimos answerBlock (viñetas cortas) + un poco de promptBlock para no saturar R1.
+  const polishContext = [known ? `Dato del taller — ${known.title}: ${known.body}` : "", rag.answerBlock || rag.promptBlock]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 1800);
+
   const polished = await polishAnswer({
     question,
-    context: internal,
+    context: polishContext || internal,
     messages: options?.messages,
     images: rag.images,
     sources,
   });
 
-  if (!polished.ok && known) {
-    return {
-      applicable: true,
-      answer: `**${known.title}**\n\n${known.body}`,
-      images: polished.images,
-      sources: polished.sources,
-      notes: "",
-    };
+  if (!polished.ok) {
+    if (known) {
+      return {
+        applicable: true,
+        answer: `**${known.title}**\n\n${known.body}`,
+        images: polished.images,
+        sources: polished.sources,
+        notes: "",
+      };
+    }
+    // Si hay fuentes/imágenes, no mostremos solo el error de timeout.
+    if (rag.answerBlock || rag.images.length || sources.length) {
+      const summary =
+        polished.text.includes("Tiempo de espera agotado") || polished.text.includes("No pude completar")
+          ? [
+              `**${question}**`,
+              "",
+              rag.answerBlock || "- Consulta las fuentes e imágenes asociadas.",
+              "",
+              "_Resumen a partir de las fuentes (Ollama tardó demasiado)._",
+            ].join("\n")
+          : polished.text;
+      return {
+        applicable: true,
+        answer: summary,
+        images: polished.images,
+        sources: polished.sources,
+        notes: "",
+      };
+    }
   }
 
   return {

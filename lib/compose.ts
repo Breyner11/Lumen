@@ -85,26 +85,11 @@ export async function composeConversation(options: {
       answer: learned.answer,
       reason: learned.reason,
     });
-    if (languageMode === "translate") {
-      return wrap(options, notes, answer, {
-        learnedFrom: learned.id,
-        badge: routedIntent ? intentLabel(routedIntent) : undefined,
-        languageMode,
-      });
-    }
-    const polished = await polishAnswer({
-      question: latest,
-      context: answer,
-      messages: options.messages,
-      style,
-    });
-    return wrap(options, notes, polished.text, {
+    // Las lecciones ya son la respuesta correcta: no las reescribimos con R1.
+    return wrap(options, notes, answer, {
       learnedFrom: learned.id,
       badge: routedIntent ? intentLabel(routedIntent) : undefined,
       languageMode,
-      thinking: polished.thinking,
-      images: polished.images,
-      sources: polished.sources,
     });
   }
 

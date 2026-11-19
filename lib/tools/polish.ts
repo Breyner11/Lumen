@@ -11,6 +11,8 @@ import type { ChatTurn } from "@/lib/types";
 export const OLLAMA_WARMUP_MESSAGE =
   "Iniciando modelo DeepSeek en Ollama, intenta de nuevo en unos segundos";
 
+const MAX_INTERNAL_CHARS = 1600;
+
 export type PolishResult = {
   text: string;
   thinking?: string;
@@ -50,27 +52,27 @@ export async function polishAnswer(options: {
     };
   }
 
-  const internal = stripRawContextMarkers(seed).slice(0, 5000);
+  const internal = stripRawContextMarkers(seed).slice(0, MAX_INTERNAL_CHARS);
   const drafted = await ollamaChat({
     languageMode: "spanish",
     keepAlive: "5m",
-    timeoutMs: 120_000,
+    timeoutMs: 180_000,
+    think: false,
     system: [
       "Eres Taller, un asistente todoterreno.",
-      "Responde SIEMPRE en español natural y correcto, sin importar si las fuentes o documentos están en inglés u otro idioma.",
-      "La ÚNICA excepción es cuando el usuario pida explícitamente traducir un texto.",
-      "No copies fragmentos crudos ni encabezados tipo «Contexto recuperado», «Según la memoria local y la web» o «Web · …».",
-      "No listes scores, ids de chunks ni bloques [1] [2] de recuperación.",
-      "Redacta una respuesta limpia y bien estructurada: subtítulos en negrita, listas con viñetas y párrafos cortos.",
-      styleInstruction(style),
+      "Responde SIEMPRE en español natural y correcto.",
+      "Sé breve: máximo 120-180 palabras, con subtítulos en negrita y viñetas si ayudan.",
+      "No copies fragmentos crudos ni encabezados de recuperación.",
+      "No listes scores ni bloques [1] [2].",
+      styleInstruction(style === "informativo" ? "informativo" : style === "corto" ? "corto" : "default"),
     ].join("\n"),
     prompt: [
-      `Pregunta del usuario:\n${options.question}`,
+      `Pregunta:\n${options.question}`,
       "",
-      "Material interno (NO lo vuelques crudo; úsalo solo para redactar):",
-      internal || "(sin material adicional)",
+      "Notas internas (úsalas, no las copies):",
+      internal || "(sin notas)",
       "",
-      "Entrega solo la respuesta final al usuario.",
+      "Respuesta final breve:",
     ].join("\n"),
   });
 
@@ -80,12 +82,11 @@ export async function polishAnswer(options: {
       drafted.error || "respuesta vacía",
       { model: drafted.model },
     );
-    // Nunca volcar recuperación cruda. Si el material ya era una respuesta limpia
-    // (p. ej. lección aprendida), la reutilizamos; si no, mostramos el error real.
-    const clean = stripRawContextMarkers(internal);
-    if (!clean || looksLikeRawRetrieval(clean)) {
+    // Solo usamos resumen local si hay viñetas útiles (answerBlock), no texto de recuperación cruda.
+    const fallback = draftFromInternal(options.question, internal);
+    if (fallback && /^- /m.test(internal)) {
       return {
-        text: formatOllamaErrorForUser(drafted.error, drafted.model),
+        text: fallback,
         images,
         sources,
         ok: false,
@@ -93,7 +94,7 @@ export async function polishAnswer(options: {
       };
     }
     return {
-      text: clean.slice(0, 4000),
+      text: formatOllamaErrorForUser(drafted.error, drafted.model),
       images,
       sources,
       ok: false,
@@ -108,6 +109,29 @@ export async function polishAnswer(options: {
     sources,
     ok: true,
   };
+}
+
+/** Resume limpio a partir del material recuperado si Ollama falla/timeout. */
+export function draftFromInternal(question: string, context: string): string {
+  const clean = stripRawContextMarkers(context);
+  if (!clean || looksLikeRawRetrieval(clean) && !/- /.test(clean)) {
+    // Intenta sacar viñetas o frases útiles.
+  }
+  const bullets = clean
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^\s*\[\d+\]/.test(line) && !/score\s+\d/i.test(line))
+    .map((line) => line.replace(/^\s*[-*]\s*/, ""))
+    .filter((line) => line.length > 20)
+    .slice(0, 5);
+  if (!bullets.length) return "";
+  return [
+    `**${question}**`,
+    "",
+    ...bullets.map((line) => (line.startsWith("-") ? line : `- ${line}`)),
+    "",
+    "_Resumen a partir de las fuentes (el modelo local tardó demasiado)._",
+  ].join("\n");
 }
 
 function stripRawContextMarkers(text: string): string {
