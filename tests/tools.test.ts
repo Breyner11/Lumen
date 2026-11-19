@@ -106,6 +106,14 @@ test("investigar define casas en español sin ruido CASAS/Municipality", async (
   assert.doesNotMatch(result.answer, /Assessment Systems|Municipality|TOPSpro|kilometers/i);
 });
 
+test("investigar define ciudades como ficha y no demografía", async () => {
+  const result = await runActivity("investigar", "Ciudades");
+  assert.match(result.answer, /asentamiento humano|servicios urbanos/i);
+  assert.match(result.answer, /Sin[oó]nimos/);
+  assert.match(result.answer, /Ejemplos de uso/);
+  assert.doesNotMatch(result.answer, /Chiclayo|Huancayo|Iquitos|Lima Metropolitana|32\s*%/i);
+});
+
 test("buildDefinitionDraft estructura una definición desde fuentes", async () => {
   const { buildDefinitionDraft, looksLikeDefinitionQuery, isUsableDefinitionSentence } = await import(
     "../lib/tools/research"
@@ -142,9 +150,41 @@ test("buildDefinitionDraft estructura una definición desde fuentes", async () =
     },
   ]);
   assert.match(draft, /\*\*Canil\*\*/);
-  assert.match(draft, /Significados y usos principales/);
+  assert.match(draft, /recinto destinado a alojar perros/i);
   assert.doesNotMatch(draft, /Qué dicen las fuentes/);
   assert.doesNotMatch(draft, /Patrimonio de la Humanidad|n su territorio/i);
+});
+
+test("no usa demografía peruana como significados de ciudad", async () => {
+  const { buildDefinitionDraft, isFactualDump, isLexicalSense } = await import("../lib/tools/research");
+  const junk =
+    "Chiclayo y Huancayo; a éstas se les sumarían al año 2025 las ciudades de Iquitos y Cusco.";
+  assert.equal(isFactualDump(junk), true);
+  assert.equal(isLexicalSense(junk, "ciudades"), false);
+  const draft = buildDefinitionDraft("ciudades", [
+    {
+      score: 0.5,
+      chunk: {
+        id: "1",
+        documentId: "d1",
+        title: "Ciudad",
+        text: "Una ciudad es un asentamiento humano de tamaño considerable, con servicios urbanos.",
+        index: 0,
+      },
+    },
+    {
+      score: 0.4,
+      chunk: {
+        id: "2",
+        documentId: "d2",
+        title: "Perú",
+        text: junk + " Lima Metropolitana es la mayor concentración urbana con el 32 % de todos los habitantes.",
+        index: 1,
+      },
+    },
+  ]);
+  assert.match(draft, /asentamiento humano/i);
+  assert.doesNotMatch(draft, /Chiclayo|Huancayo|32\s*%|2025/i);
 });
 
 test("filtra colisiones en inglés y acrónimos para casas", async () => {

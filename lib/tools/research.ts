@@ -82,6 +82,32 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
       '- **Linaje o dinastía:** "La casa real asistió a la ceremonia oficial."',
     ].join("\n"),
   },
+  {
+    match:
+      /^(qu[eé]\s+es\s+(una?\s+)?)?ciudades?\s*$|^(significado|definici[oó]n)\s+de\s+(una?\s+)?ciudades?\s*$/i,
+    title: "Ciudades",
+    body: [
+      "Ciudades es el plural de ciudad: un asentamiento humano de tamaño considerable, con población densa, administración propia y servicios urbanos (comercio, transporte, salud, educación).",
+      "",
+      "**Significados y usos principales**",
+      "",
+      "- **Asentamiento urbano:** núcleo poblado mayor que un pueblo, con calles, edificios y vida económica continua.",
+      "- **Ámbito administrativo:** territorio o municipio con gobierno local (alcaldía, ayuntamiento).",
+      "- **Conjunto social:** la comunidad que vive y trabaja en ese espacio («la ciudad se organizó»).",
+      "- **Uso figurado:** ambiente intenso o agitado («aquello era una ciudad»).",
+      "",
+      "**Sinónimos**",
+      "",
+      "- Urbe, metrópoli, capital, municipio, centro urbano",
+      "- En contraste: pueblo, aldea, villa (asentamientos menores)",
+      "",
+      "**Ejemplos de uso**",
+      "",
+      '- "Bogotá es una de las ciudades más grandes de Colombia."',
+      '- "Prefiere vivir en la ciudad por el acceso al trabajo y a los servicios."',
+      '- "Las ciudades costeras suelen crecer alrededor del puerto."',
+    ].join("\n"),
+  },
 ];
 
 export async function researchBrief(
@@ -215,28 +241,29 @@ export function buildDefinitionDraft(
   const unique = dedupeSentences(sentences).slice(0, 8);
   if (!unique.length) return "";
 
+  const lexical = unique.filter((sentence) => isLexicalSense(sentence, term));
   const lead =
-    unique.find((sentence) =>
-      new RegExp(`\\b${escapeRegExp(term)}\\b.{0,40}\\b(es|son|designa|significa|se\\s+refiere)\\b`, "i").test(
-        sentence,
-      ),
+    lexical.find((sentence) =>
+      new RegExp(
+        `\\b${escapeRegExp(term)}\\b.{0,40}\\b(es|son|designa|significa|se\\s+refiere)\\b`,
+        "i",
+      ).test(sentence),
     ) ||
-    unique.find((sentence) => /\bes\s+un[a]?\b|\bse\s+trata\s+de\b|\bsignifica\b/i.test(sentence)) ||
-    unique[0];
-  const meanings = unique.filter((sentence) => sentence !== lead).slice(0, 4);
+    lexical.find((sentence) => /\bes\s+un[a]?\b|\bse\s+trata\s+de\b|\bsignifica\b/i.test(sentence)) ||
+    lexical[0];
+  if (!lead) return "";
+
+  const meanings = lexical.filter((sentence) => sentence !== lead && isLexicalSense(sentence, term)).slice(0, 4);
   const examples = unique
     .filter((sentence) => /[«"“]/.test(sentence) || /\bejemplo\b/i.test(sentence))
+    .filter((sentence) => !isFactualDump(sentence))
     .slice(0, 3);
 
-  const sections = [
-    `**${heading}**`,
-    "",
-    lead,
-    "",
-    "**Significados y usos principales**",
-    "",
-    ...(meanings.length ? meanings.map((sentence) => `- ${sentence}`) : [`- ${lead}`]),
-  ];
+  const sections = [`**${heading}**`, "", lead];
+
+  if (meanings.length) {
+    sections.push("", "**Significados y usos principales**", "", ...meanings.map((sentence) => `- ${sentence}`));
+  }
 
   if (examples.length) {
     sections.push("", "**Ejemplos de uso**", "", ...examples.map((sentence) => `- ${sentence}`));
@@ -246,7 +273,7 @@ export function buildDefinitionDraft(
     "",
     "**En resumen**",
     "",
-    `«${heading}» se entiende sobre todo a partir de las fuentes recuperadas; revisa los enlaces al final para ampliar.`,
+    lead.length > 180 ? `${lead.slice(0, 177).trim()}…` : lead,
   );
 
   return sections.join("\n");
@@ -283,12 +310,41 @@ export function isUsableDefinitionSentence(sentence: string, term: string): bool
   if (isDictionaryNoise(sentence)) return false;
   if (isTruncatedSentence(sentence)) return false;
   if (isEnglishHeavy(sentence)) return false;
+  if (isFactualDump(sentence)) return false;
   if (!sentenceMentionsTerm(sentence, term)) return false;
   // Evita municipios/acrónimos: "Casas Municipality", "CASAS provides testing…"
   if (/\bmunicipality\b|\bcounty\b|\bassessment systems\b|\bweb trainings?\b|\btopspro\b/i.test(sentence)) {
     return false;
   }
   return true;
+}
+
+/** Solo acepciones léxicas; no listas de ciudades ni demografía. */
+export function isLexicalSense(sentence: string, term: string): boolean {
+  if (!isUsableDefinitionSentence(sentence, term)) return false;
+  if (
+    !/\b(es|son|significa|designa|denota|se\s+refiere|se\s+trata|puede\s+referirse|llamad[oa]s?|consiste\s+en)\b/i.test(
+      sentence,
+    )
+  ) {
+    return false;
+  }
+  if (isFactualDump(sentence)) return false;
+  return true;
+}
+
+export function isFactualDump(sentence: string): boolean {
+  if (/\d+\s*%/.test(sentence)) return true;
+  if (/\b(habitantes|demograf|metropolitana|concentraci[oó]n urbana|al a[nñ]o\s+20\d{2})\b/i.test(sentence)) {
+    return true;
+  }
+  if (/\b20\d{2}\b/.test(sentence) && /\b(ciudades?|habitantes|poblaci[oó]n)\b/i.test(sentence)) return true;
+  // Listas de topónimos: "Chiclayo y Huancayo; … Iquitos y Cusco"
+  const placeLike = sentence.match(/\b[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]{3,}(?:\s+y\s+[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]{3,})+/g);
+  if (placeLike && placeLike.length >= 1) return true;
+  const caps = sentence.match(/\b[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]{2,}\b/g) || [];
+  if (caps.length >= 3) return true;
+  return false;
 }
 
 /** Rechaza choques tipo CASAS (acrónimo EN) cuando el usuario pide «casas» en español. */
