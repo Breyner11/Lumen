@@ -1,5 +1,10 @@
 import { formatRagContext } from "@/lib/rag/augment";
-import { engineHealth, engineIndexDocument, engineQuery } from "@/lib/rag/engine-client";
+import {
+  engineHealth,
+  engineIndexDocument,
+  engineQuery,
+  engineSearchWithImages,
+} from "@/lib/rag/engine-client";
 import { buildRagIndex, searchRagIndex } from "@/lib/rag/index";
 import type { RagContext, RagDocument, RagHit } from "@/lib/rag/types";
 import type { Lesson } from "@/lib/lessons";
@@ -99,17 +104,18 @@ export async function runRagPipeline(options: {
           },
         });
       }
-      if (hits.length) {
-        const context = formatRagContext(hits.slice(0, 8));
-        if (remote.embedBackend) {
-          context.answerBlock = `${context.answerBlock}\n\n_Motor: Python · embeddings ${remote.embedBackend} · búsqueda DuckDuckGo._`;
-        }
+      if (hits.length || remote.images.length) {
+        const context = formatRagContext(
+          hits.slice(0, 8),
+          remote.images.map((image) => ({ url: image.url, title: image.title })),
+        );
         return context;
       }
     }
   }
 
   let liveDocs: RagDocument[] = [];
+  let liveImages: { url: string; title?: string }[] = [];
   if (includeLive) {
     try {
       const sources = await gatherSources(options.query);
@@ -117,14 +123,20 @@ export async function runRagPipeline(options: {
     } catch {
       liveDocs = [];
     }
+    try {
+      const remoteSearch = await engineSearchWithImages(options.query, 4);
+      liveImages = remoteSearch.images.map((image) => ({ url: image.url, title: image.title }));
+    } catch {
+      liveImages = [];
+    }
   }
 
   const documents = [...baseDocs, ...liveDocs];
   if (!documents.length) {
-    return formatRagContext([]);
+    return formatRagContext([], liveImages);
   }
 
   const index = buildRagIndex(documents);
   const hits = searchRagIndex(index, options.query, options.activity === "investigar" ? 5 : 4);
-  return formatRagContext(hits);
+  return formatRagContext(hits, liveImages);
 }

@@ -1,7 +1,14 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useState, type ReactNode } from "react";
+import { ExternalLink, Link2, X } from "lucide-react";
+import { stripCitationBlocks } from "@/lib/rag/citations";
 
 export function MarkdownView({ text }: { text: string }) {
-  const { thinking, content } = splitThinking(text);
+  const { thinking, content: afterThink } = splitThinking(text);
+  const { content, images, sources } = stripCitationBlocks(afterThink);
+  const [lightbox, setLightbox] = useState<{ url: string; title: string } | null>(null);
+
   return (
     <div className="md-body space-y-3">
       {thinking ? (
@@ -12,7 +19,89 @@ export function MarkdownView({ text }: { text: string }) {
           <div className="mt-2 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">{thinking}</div>
         </details>
       ) : null}
+
+      {images.length > 0 ? (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {images.map((image) => (
+            <button
+              key={image.url}
+              type="button"
+              className="group relative h-24 w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-muted/40"
+              onClick={() => setLightbox({ url: image.url, title: image.title || "Imagen" })}
+              aria-label={`Ver imagen: ${image.title || "resultado"}`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={image.url}
+                alt={image.title || "Imagen de la web"}
+                className="h-full w-full object-cover transition group-hover:scale-[1.03]"
+                loading="lazy"
+                referrerPolicy="no-referrer"
+                onError={(event) => {
+                  (event.currentTarget.parentElement as HTMLElement | null)?.style.setProperty("display", "none");
+                }}
+              />
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {renderBlocks(content)}
+
+      {sources.length > 0 ? (
+        <details className="rounded-xl border border-border/80 bg-card/70 px-3 py-2 shadow-sm">
+          <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground">
+            <Link2 className="size-3.5 text-muted-foreground" />
+            Fuentes ({sources.length})
+          </summary>
+          <ul className="mt-2 space-y-2 border-t border-border/60 pt-2">
+            {sources.map((source, index) => (
+              <li key={`${source.title}-${index}`} className="text-sm leading-5">
+                {source.url ? (
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-start gap-1.5 text-foreground underline-offset-2 hover:underline"
+                  >
+                    <ExternalLink className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                    <span>{source.title}</span>
+                  </a>
+                ) : (
+                  <span className="text-muted-foreground">{source.title}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {lightbox ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={lightbox.title}
+          onClick={() => setLightbox(null)}
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 rounded-full bg-white/90 p-2 text-black"
+            aria-label="Cerrar imagen"
+            onClick={() => setLightbox(null)}
+          >
+            <X className="size-4" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightbox.url}
+            alt={lightbox.title}
+            className="max-h-[85vh] max-w-[92vw] rounded-2xl object-contain shadow-2xl"
+            referrerPolicy="no-referrer"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

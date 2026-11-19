@@ -1,3 +1,5 @@
+import type { CitationImage, CitationSource } from "@/lib/rag/citations";
+
 export type RagDocument = {
   id: string;
   title: string;
@@ -24,4 +26,6 @@ export type RagContext = {
   hits: RagHit[];
   promptBlock: string;
   answerBlock: string;
+  sources: CitationSource[];
+  images: CitationImage[];
 };

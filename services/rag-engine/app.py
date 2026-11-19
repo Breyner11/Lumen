@@ -555,6 +555,30 @@ def ddg_text(query: str, max_results: int) -> list[dict[str, str]]:
     return results
 
 
+def ddg_images(query: str, max_results: int = 3) -> list[dict[str, str]]:
+    """Hasta 3 imágenes relevantes vía DuckDuckGo Images."""
+    results: list[dict[str, str]] = []
+    try:
+        with DDGS() as ddgs:
+            for item in ddgs.images(query, max_results=max_results):
+                image_url = item.get("image") or item.get("thumbnail") or item.get("url") or ""
+                if not image_url.startswith("http"):
+                    continue
+                results.append(
+                    {
+                        "title": item.get("title") or query,
+                        "url": image_url,
+                        "thumbnail": item.get("thumbnail") or image_url,
+                        "source": item.get("url") or item.get("source") or "",
+                    }
+                )
+                if len(results) >= max_results:
+                    break
+    except Exception:
+        return []
+    return results
+
+
 @app.post("/search")
 async def search_web(body: SearchRequest) -> dict[str, Any]:
     try:
@@ -562,9 +586,10 @@ async def search_web(body: SearchRequest) -> dict[str, Any]:
         if not results:
             # Soft retry with a simpler query.
             results = ddg_text(body.query.split("?")[0].strip(), body.max_results)
+        images = ddg_images(body.query, 3) if internet_ok() else []
     except Exception as error:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"DuckDuckGo no respondió: {error}") from error
-    return {"query": body.query, "results": results}
+    return {"query": body.query, "results": results, "images": images}
 
 
 @app.post("/index")
@@ -710,9 +735,11 @@ async def query_rag(body: QueryRequest) -> dict[str, Any]:
     hits = hits[: body.top_k]
 
     web_results: list[dict[str, str]] = []
+    images: list[dict[str, str]] = []
     if body.web:
         try:
             web_results = ddg_text(body.query, 4)
+            images = ddg_images(body.query, 3) if internet_ok() else []
             # Aprendizaje bajo demanda: indexa resumen limpio si hay internet.
             if web_results and internet_ok():
                 remember_user_query_topic(TOPICS_PATH, body.query)
@@ -723,12 +750,14 @@ async def query_rag(body: QueryRequest) -> dict[str, Any]:
                     pass
         except Exception:
             web_results = []
+            images = []
 
     return {
         "query": body.query,
         "embed_backend": backend,
         "hits": hits,
         "web": web_results,
+        "images": images,
     }
 
 

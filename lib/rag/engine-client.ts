@@ -9,6 +9,13 @@ export type EngineWebHit = {
   source: string;
 };
 
+export type EngineImageHit = {
+  title: string;
+  url: string;
+  thumbnail?: string;
+  source?: string;
+};
+
 export type EngineRagHit = {
   id: string;
   title: string;
@@ -63,6 +70,26 @@ export async function engineSearch(query: string, maxResults = 5): Promise<Engin
   }
 }
 
+export async function engineSearchWithImages(
+  query: string,
+  maxResults = 5,
+): Promise<{ results: EngineWebHit[]; images: EngineImageHit[] }> {
+  try {
+    const response = await fetch(`${ragEngineUrl()}/search`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query, max_results: maxResults }),
+      signal: AbortSignal.timeout(15_000),
+      cache: "no-store",
+    });
+    if (!response.ok) return { results: [], images: [] };
+    const json = (await response.json()) as { results?: EngineWebHit[]; images?: EngineImageHit[] };
+    return { results: json.results ?? [], images: json.images ?? [] };
+  } catch {
+    return { results: [], images: [] };
+  }
+}
+
 export async function engineIndexDocument(document: RagDocument): Promise<boolean> {
   try {
     const response = await fetch(`${ragEngineUrl()}/index`, {
@@ -86,7 +113,12 @@ export async function engineIndexDocument(document: RagDocument): Promise<boolea
 export async function engineQuery(
   query: string,
   options?: { topK?: number; web?: boolean },
-): Promise<{ hits: EngineRagHit[]; web: EngineWebHit[]; embedBackend?: string } | null> {
+): Promise<{
+  hits: EngineRagHit[];
+  web: EngineWebHit[];
+  images: EngineImageHit[];
+  embedBackend?: string;
+} | null> {
   try {
     const response = await fetch(`${ragEngineUrl()}/query`, {
       method: "POST",
@@ -103,11 +135,13 @@ export async function engineQuery(
     const json = (await response.json()) as {
       hits?: EngineRagHit[];
       web?: EngineWebHit[];
+      images?: EngineImageHit[];
       embed_backend?: string;
     };
     return {
       hits: json.hits ?? [],
       web: json.web ?? [],
+      images: json.images ?? [],
       embedBackend: json.embed_backend,
     };
   } catch {

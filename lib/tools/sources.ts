@@ -1,3 +1,4 @@
+import { appendCitations } from "@/lib/rag/citations";
 import { isRelevant } from "@/lib/tools/relevance";
 import { searchWeb } from "@/lib/tools/websearch";
 import { lookupWikipedia, searchQuery, type WikiHit } from "@/lib/tools/wiki";
@@ -478,38 +479,26 @@ export function formatMultiSourceAnswer(question: string, hits: SourceHit[], lea
   }
 
   if (papers.length) {
-    sections.push("**Artículos y trabajos indexados**");
+    sections.push("**Artículos indexados**");
     sections.push("");
-    for (const paper of papers) {
+    for (const paper of papers.slice(0, 3)) {
       const year = paper.year ? ` (${paper.year})` : "";
       sections.push(`- **${paper.title}**${year} — ${paper.source}`);
-      if (paper.summary) sections.push(`  ${paper.summary.slice(0, 220)}`);
-      sections.push(`  ${paper.url}`);
     }
     sections.push("");
   }
 
   if (books.length) {
-    sections.push("**Libros (Open Library)**");
+    sections.push("**Libros**");
     sections.push("");
-    for (const book of books) {
+    for (const book of books.slice(0, 2)) {
       const year = book.year ? ` (${book.year})` : "";
-      sections.push(`- **${book.title}**${year} — ${book.summary} ${book.url}`);
+      sections.push(`- **${book.title}**${year}`);
     }
     sections.push("");
   }
 
-  sections.push("**Fuentes consultadas**");
-  sections.push("");
-  const uniqueSources = [...new Set(hits.map((hit) => hit.source))];
-  for (const source of uniqueSources) {
-    const sample = hits.find((hit) => hit.source === source);
-    sections.push(`- ${source}${sample ? `: ${sample.url}` : ""}`);
-  }
-  sections.push("");
-  sections.push(
-    "_Solo se muestran fuentes con enlace. Si dos bases discrepan, prioriza el artículo académico con DOI o la ficha de Wikidata/Wikipedia._",
-  );
-
-  return sections.join("\n");
+  return appendCitations(sections.join("\n").trim(), {
+    sources: hits.map((hit) => ({ title: `${hit.source}: ${hit.title}`, url: hit.url })),
+  });
 }

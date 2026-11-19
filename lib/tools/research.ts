@@ -1,3 +1,4 @@
+import { appendCitations, sourcesFromHits } from "@/lib/rag/citations";
 import { runRagPipeline } from "@/lib/rag/pipeline";
 import type { RagDocument } from "@/lib/rag/types";
 import type { Lesson } from "@/lib/lessons";
@@ -48,7 +49,7 @@ export async function researchBrief(
     return {
       applicable: false,
       answer:
-        "Escribe la pregunta. Uso RAG sobre tus documentos y bases verificables (Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC, Open Library).",
+        "Escribe la pregunta. Uso RAG sobre tus documentos y bases verificables (Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC, Open Library) más web general.",
       notes: "",
     };
   }
@@ -71,21 +72,32 @@ export async function researchBrief(
     };
   }
 
-  if (rag.hits.length) {
+  if (rag.hits.length || rag.images.length) {
     const lead = known ? [`**${known.title}**`, "", known.body, ""].join("\n") : "";
-    const answer = [
-      `**Pregunta:** ${question}`,
+    const synthesis = [
+      `**${question}**`,
       "",
       lead,
-      "Respuesta con **RAG** (recuperación + generación local):",
-      "",
-      rag.answerBlock,
-      "",
-      "_Los fragmentos se eligieron por similitud TF-IDF/coseno sobre el índice. Revisa siempre el enlace o la fuente._",
-    ].join("\n");
+      rag.answerBlock
+        ? ["Según la memoria local y la web:", "", rag.answerBlock].join("\n")
+        : "Encontré referencias útiles; ábrelas en **Fuentes**.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const sources =
+      rag.sources.length > 0
+        ? rag.sources
+        : sourcesFromHits(
+            rag.hits.map((hit) => ({
+              title: hit.chunk.title,
+              source: hit.chunk.source,
+            })),
+          );
+
     return {
       applicable: true,
-      answer,
+      answer: appendCitations(synthesis, { images: rag.images, sources }),
       notes: rag.promptBlock.slice(0, 4000),
     };
   }
@@ -93,9 +105,9 @@ export async function researchBrief(
   return {
     applicable: false,
     answer: [
-      `No recuperé fragmentos útiles para «${question}».`,
+      `No recuperé material útil para «${question}».`,
       "",
-      "Prueba a reformular, o carga un apunte en **Conocimiento RAG** para indexarlo.",
+      "Prueba a reformular, o carga un apunte en **Conocimiento RAG**.",
     ].join("\n"),
     notes: "",
   };

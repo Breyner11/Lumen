@@ -1,3 +1,4 @@
+import { appendCitations } from "@/lib/rag/citations";
 import { gatherSources } from "@/lib/tools/sources";
 import { ollamaChat } from "@/lib/ollama";
 
@@ -9,7 +10,6 @@ export type EverydayResult = {
 
 export async function handleEmergency(input: string): Promise<EverydayResult> {
   const sources = await gatherSources(input);
-  const tips = sources.slice(0, 3).map((s) => `- ${s.title}: ${s.summary.slice(0, 160)}`).join("\n");
   const answer = [
     "_Herramienta: Emergencia_",
     "",
@@ -24,21 +24,23 @@ export async function handleEmergency(input: string): Promise<EverydayResult> {
     "**Según tu consulta**",
     "",
     summarizeEmergency(input),
-    tips ? `\n**Referencias rápidas**\n${tips}` : "",
     "",
     "_Si la situación es real, prioriza ayuda profesional ahora._",
-  ]
-    .filter(Boolean)
-    .join("\n");
-  return { applicable: true, answer, notes: tips };
+  ].join("\n");
+  return {
+    applicable: true,
+    answer: appendCitations(answer, {
+      sources: sources.slice(0, 6).map((s) => ({ title: `${s.source}: ${s.title}`, url: s.url })),
+    }),
+    notes: sources
+      .slice(0, 3)
+      .map((s) => `${s.title}: ${s.summary.slice(0, 160)}`)
+      .join("\n"),
+  };
 }
 
 export async function handleDailyLife(input: string): Promise<EverydayResult> {
   const sources = await gatherSources(input);
-  const tips = sources
-    .slice(0, 4)
-    .map((s) => `- [${s.title}](${s.url}): ${s.summary.slice(0, 180)}`)
-    .join("\n");
   const answer = [
     "_Herramienta: Vida diaria_",
     "",
@@ -54,9 +56,17 @@ export async function handleDailyLife(input: string): Promise<EverydayResult> {
     "**Cuándo acudir a un profesional**",
     "",
     "- Síntomas que empeoran, no mejoran en 48–72 h, o afectan a niños/embarazo/enfermedades crónicas.",
-    tips ? `\n**Fuentes**\n${tips}` : "",
   ].join("\n");
-  return { applicable: true, answer, notes: tips };
+  return {
+    applicable: true,
+    answer: appendCitations(answer, {
+      sources: sources.slice(0, 6).map((s) => ({ title: `${s.source}: ${s.title}`, url: s.url })),
+    }),
+    notes: sources
+      .slice(0, 4)
+      .map((s) => `${s.title}: ${s.summary.slice(0, 180)}`)
+      .join("\n"),
+  };
 }
 
 export async function handleProject(input: string): Promise<EverydayResult> {
@@ -65,6 +75,9 @@ export async function handleProject(input: string): Promise<EverydayResult> {
     .slice(0, 4)
     .map((s) => `- ${s.title}: ${s.summary.slice(0, 180)}`)
     .join("\n");
+  const citations = {
+    sources: sources.slice(0, 6).map((s) => ({ title: `${s.source}: ${s.title}`, url: s.url })),
+  };
   const local = await ollamaChat({
     system:
       "Eres un planificador práctico. Entrega fases, materiales y pasos numerados en español. Sé concreto. Máximo 400 palabras.",
@@ -74,28 +87,30 @@ export async function handleProject(input: string): Promise<EverydayResult> {
     const think = local.thinking ? `<think>${local.thinking}</think>\n\n` : "";
     return {
       applicable: true,
-      answer: `_Herramienta: Proyecto (deepseek-r1:1.5b)_\n\n${think}${local.text}`,
+      answer: appendCitations(`_Herramienta: Proyecto (deepseek-r1:1.5b)_\n\n${think}${local.text}`, citations),
       notes: context,
     };
   }
   return {
     applicable: true,
-    answer: [
-      "_Herramienta: Proyecto_",
-      "",
-      "**Plan por fases**",
-      "",
-      "1. **Definir objetivo** — qué quieres lograr y para cuándo.",
-      "2. **Materiales / requisitos** — lista mínima para empezar.",
-      "3. **Fase 1 (arranque)** — primer resultado usable en poco tiempo.",
-      "4. **Fase 2 (construir)** — núcleo del trabajo.",
-      "5. **Fase 3 (probar y ajustar)** — validar y corregir.",
-      "",
-      `Pedido: ${input}`,
-      context ? `\n**Contexto**\n${context}` : "",
-      "",
-      "_Para un plan más fino, arranca Ollama con `deepseek-r1:1.5b`._",
-    ].join("\n"),
+    answer: appendCitations(
+      [
+        "_Herramienta: Proyecto_",
+        "",
+        "**Plan por fases**",
+        "",
+        "1. **Definir objetivo** — qué quieres lograr y para cuándo.",
+        "2. **Materiales / requisitos** — lista mínima para empezar.",
+        "3. **Fase 1 (arranque)** — primer resultado usable en poco tiempo.",
+        "4. **Fase 2 (construir)** — núcleo del trabajo.",
+        "5. **Fase 3 (probar y ajustar)** — validar y corregir.",
+        "",
+        `Pedido: ${input}`,
+        "",
+        "_Para un plan más fino, arranca Ollama con `deepseek-r1:1.5b`._",
+      ].join("\n"),
+      citations,
+    ),
     notes: context,
   };
 }
