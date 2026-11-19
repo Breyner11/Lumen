@@ -68,8 +68,9 @@ export function TallerApp() {
   const [effort, setEffort] = useState<Effort>("high");
   const [thinking, setThinking] = useState(true);
   const [skin, setSkin] = useState<SkinId>("brisa");
-  const [sessions, setSessions] = useState<ChatSession[]>(() => [createEmptySession()]);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
+  const [clock, setClock] = useState(0);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [documents, setDocuments] = useState<RagDocument[]>([]);
   const [draft, setDraft] = useState("");
@@ -113,6 +114,7 @@ export function TallerApp() {
 
   /* eslint-disable react-hooks/set-state-in-effect -- restore localStorage after hydration */
   useEffect(() => {
+    setClock(Date.now());
     const stored = readStorage();
     if (stored) {
       setModel(stored.model);
@@ -801,7 +803,7 @@ export function TallerApp() {
                       >
                         <p className="truncate text-sm font-medium">{session.title}</p>
                         <p className="mt-0.5 text-[11px] text-muted-foreground">
-                          {formatHistoryTime(session.updatedAt)}
+                          {clock ? formatHistoryTime(session.updatedAt, clock) : "…"}
                           {session.messages.length
                             ? ` · ${session.messages.length} msg`
                             : " · vacío"}
@@ -919,6 +921,7 @@ export function TallerApp() {
               <WelcomeState
                 starters={current.starters}
                 recent={previousChats.filter((session) => session.id !== activeSessionId && session.messages.length > 0).slice(0, 3)}
+                clock={clock}
                 onPick={(starter) => void send(starter)}
                 onOpenChat={openChat}
                 onBrowseSkins={() => setSkinsOpen(true)}
@@ -1077,7 +1080,7 @@ export function TallerApp() {
                   >
                     <span className="block truncate">{session.title}</span>
                     <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                      {formatHistoryTime(session.updatedAt)}
+                      {clock ? formatHistoryTime(session.updatedAt, clock) : "…"}
                     </span>
                   </button>
                   <button
@@ -1265,12 +1268,14 @@ function SkinGallery({ current, onSelect }: { current: SkinId; onSelect: (id: Sk
 function WelcomeState({
   starters,
   recent,
+  clock,
   onPick,
   onOpenChat,
   onBrowseSkins,
 }: {
   starters: string[];
   recent: ChatSession[];
+  clock: number;
   onPick: (starter: string) => void;
   onOpenChat: (sessionId: string) => void;
   onBrowseSkins: () => void;
@@ -1319,7 +1324,9 @@ function WelcomeState({
                 className="rounded-xl border border-border/80 bg-background/50 px-3 py-2 text-left transition hover:border-primary/30"
               >
                 <p className="truncate text-sm">{session.title}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{formatHistoryTime(session.updatedAt)}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {clock ? formatHistoryTime(session.updatedAt, clock) : "…"}
+                </p>
               </button>
             ))}
           </div>

@@ -56,7 +56,7 @@ export function sanitizeHistory(value: unknown): HistoryEntry[] {
   return clean.slice(0, MAX_ENTRIES);
 }
 
-export function formatHistoryTime(at: number, now = Date.now()): string {
+export function formatHistoryTime(at: number, now: number): string {
   const diff = Math.max(0, now - at);
   const minutes = Math.floor(diff / 60_000);
   if (minutes < 1) return "ahora";
