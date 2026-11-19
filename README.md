@@ -31,6 +31,18 @@ En este entorno Linux no se compila el MSI; el artifact lo genera `windows-lates
 
 El selector está en **Ajustes**; el default se elige según RAM/VRAM detectadas (`/api/ollama/models`).
 
+Visión (lector de pantalla / OCR): **`qwen2.5vl:3b`** recomendado en PC gama media (mejor que llava a ese tamaño).
+
+### Estudio, UNAD y productividad
+
+- **Tutor:** quiz, tarjetas y plan semanal («ayúdame a estudiar…»).
+- **Campus UNAD:** FAQs locales editables (citan el artículo base; no inventan pasos).
+- **Tareas UNAD:** APA 7, ortografía y esquema de informe.
+- **Verificador de noticias:** con internet apagado avisa que no pudo verificar.
+- **Enfoque:** pomodoro solo dentro de Lumen.
+- **Voz:** leer en voz alta (TTS del sistema) + micrófono/Whisper local.
+- **Recordatorios:** «recuérdame a las 18:00…» (notificación nativa en la app Tauri).
+
 ## Aprendizaje autónomo
 
 Si una respuesta falla, marca **Mal** y escribe la correcta, o envía «está mal, la respuesta es…». Taller guarda esa corrección en tu navegador y, la próxima vez que hagas la misma pregunta en ese oficio, usa lo aprendido.

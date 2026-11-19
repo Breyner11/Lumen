@@ -32,6 +32,12 @@ import {
   looksLikeFocusRequest,
   startFocusPhase,
 } from "@/lib/tools/focus";
+import { looksLikeScreenExplain, screenReaderHelpText } from "@/lib/tools/screen-reader";
+import {
+  looksLikeReminderRequest,
+  parseReminderFromText,
+} from "@/lib/tools/reminders";
+import { voiceCapabilityNote } from "@/lib/voice";
 import type { ActivityId, ChatTurn, Effort, ModelId, RecipeMessage } from "@/lib/types";
 
 export function lastUserText(messages: ChatTurn[]): string {
@@ -195,6 +201,36 @@ export async function composeConversation(options: {
   }
 
   // Fase 2: tutor, UNAD, verificador de noticias (antes del flujo genérico).
+  if (looksLikeScreenExplain(latest)) {
+    return wrap(options, "", `_Herramienta: Pantalla_\n\n${screenReaderHelpText()}`, {
+      ragHits: 1,
+      languageMode,
+    });
+  }
+  if (/\b(voz|dictado|leer\s+en\s+voz\s+alta|text[\s-]?to[\s-]?speech)\b/i.test(latest)) {
+    return wrap(options, "", `_Herramienta: Voz_\n\n${voiceCapabilityNote()}`, {
+      ragHits: 1,
+      languageMode,
+    });
+  }
+  if (looksLikeReminderRequest(latest)) {
+    const rem = parseReminderFromText(latest);
+    const body = rem
+      ? [
+          "_Herramienta: Recordatorio_",
+          "",
+          `Programé **${rem.title}** para ${new Date(rem.at).toLocaleString("es-CO")}.`,
+          "",
+          "En la app Windows, Tauri mostrará la notificación del sistema. Aquí queda guardado en local.",
+        ].join("\n")
+      : [
+          "_Herramienta: Recordatorio_",
+          "",
+          "Ejemplo: «recuérdame a las 18:00 revisar el foro UNAD».",
+        ].join("\n");
+    return wrap(options, "", body, { ragHits: 1, languageMode });
+  }
+
   if (looksLikeFocusRequest(latest)) {
     const session = startFocusPhase(createFocusSession({ softSound: /sonido/i.test(latest) }), "work");
     const body = [

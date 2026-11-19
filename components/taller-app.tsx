@@ -45,6 +45,7 @@ import {
   sanitizeUnadKb,
   type UnadKbArticle,
 } from "@/lib/tools/unad";
+import { speakSpanish, stopSpeaking } from "@/lib/voice";
 import { formatHistoryTime } from "@/lib/history";
 import {
   createEmptySession,
@@ -1805,6 +1806,24 @@ function MessageBubble({
                 }
               >
                 PDF / imprimir
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-muted-foreground"
+                onClick={() => speakSpanish(bodyContent || message.content)}
+              >
+                Leer en voz alta
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-muted-foreground"
+                onClick={() => stopSpeaking()}
+              >
+                Silencio
               </Button>
             </div>
             {correcting ? (
