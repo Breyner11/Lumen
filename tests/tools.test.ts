@@ -98,6 +98,14 @@ test("investigar define perrera con significados y ejemplos", async () => {
   assert.doesNotMatch(result.answer, /injuries|SpanishDictionary/i);
 });
 
+test("investigar define casas en español sin ruido CASAS/Municipality", async () => {
+  const result = await runActivity("investigar", "Casas");
+  assert.match(result.answer, /plural de casa|vivienda o residencia/i);
+  assert.match(result.answer, /Sin[oó]nimos/);
+  assert.match(result.answer, /Ejemplos de uso/);
+  assert.doesNotMatch(result.answer, /Assessment Systems|Municipality|TOPSpro|kilometers/i);
+});
+
 test("buildDefinitionDraft estructura una definición desde fuentes", async () => {
   const { buildDefinitionDraft, looksLikeDefinitionQuery, isUsableDefinitionSentence } = await import(
     "../lib/tools/research"
@@ -137,6 +145,57 @@ test("buildDefinitionDraft estructura una definición desde fuentes", async () =
   assert.match(draft, /Significados y usos principales/);
   assert.doesNotMatch(draft, /Qué dicen las fuentes/);
   assert.doesNotMatch(draft, /Patrimonio de la Humanidad|n su territorio/i);
+});
+
+test("filtra colisiones en inglés y acrónimos para casas", async () => {
+  const { buildDefinitionDraft, isAcronymOrForeignCollision, isEnglishHeavy } = await import(
+    "../lib/tools/research"
+  );
+  assert.equal(
+    isEnglishHeavy(
+      "CASAS provides testing of basic and academic skills for youth and adults and curriculum tools",
+    ),
+    true,
+  );
+  assert.equal(
+    isAcronymOrForeignCollision(
+      {
+        score: 0.1,
+        chunk: {
+          id: "x",
+          documentId: "x",
+          title: "CASAS",
+          text: "Comprehensive Adult Student Assessment Systems provides testing of basic skills.",
+          index: 0,
+        },
+      },
+      "casas",
+    ),
+    true,
+  );
+  const draft = buildDefinitionDraft("casas", [
+    {
+      score: 0.9,
+      chunk: {
+        id: "1",
+        documentId: "d1",
+        title: "CASAS Municipality",
+        text: "Casas Municipality is a rural administrative division in the central region of Tamaulipas, Mexico, encompassing 2,874 square kilometers.",
+        index: 0,
+      },
+    },
+    {
+      score: 0.8,
+      chunk: {
+        id: "2",
+        documentId: "d2",
+        title: "CASAS",
+        text: "CASAS provides testing of basic and academic skills for youth and adults.",
+        index: 1,
+      },
+    },
+  ]);
+  assert.equal(draft, "");
 });
 
 test("buildResearchDraft arma secciones con fuentes", async () => {

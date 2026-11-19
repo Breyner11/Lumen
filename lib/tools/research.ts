@@ -37,7 +37,8 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
     body: "Porque la presión atmosférica baja con la altitud. A menor presión, el agua alcanza el punto de ebullición con menos calor. A nivel del mar hierve cerca de 100 °C; en Bogotá (unos 2.600 m) suele hervir alrededor de 90–92 °C.",
   },
   {
-    match: /^(qu[eé]\s+es\s+(una?\s+)?)?perreras?\b|\bperrera\b/,
+    match:
+      /^(qu[eé]\s+es\s+(una?\s+)?)?perreras?\s*$|^(significado|definici[oó]n)\s+de\s+(una?\s+)?perreras?\s*$/i,
     title: "Perrera",
     body: [
       "Una perrera es un lugar o instalación destinada a alojar perros, ya sea como refugio o albergue de animales, o como una caseta, jaula o transportín para mascotas.",
@@ -59,6 +60,26 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
       "",
       "- De alojamiento: albergue, refugio animal, canil, jaula.",
       "- De transporte o caseta: guacal, transportín, caseta para perro, recinto.",
+    ].join("\n"),
+  },
+  {
+    match: /^(qu[eé]\s+es\s+(una?\s+)?)?casas?\s*$|^(significado|definici[oó]n)\s+de\s+(una?\s+)?casas?\s*$/i,
+    title: "Casas",
+    body: [
+      "Casas es el plural de casa, una edificación destinada principalmente a servir de vivienda o residencia a personas o familias. También puede referirse a un establecimiento, organización o institución.",
+      "",
+      "**Sinónimos**",
+      "",
+      "- Vivienda, hogar, morada, residencia, domicilio",
+      "- Chalet, quinta, cabaña, finca (según el estilo o entorno)",
+      "- Empresa, firma, establecimiento, institución (en contextos comerciales o de linaje, como casa comercial o casa real)",
+      "",
+      "**Ejemplos de uso**",
+      "",
+      '- **Vivienda:** "Compraron una casa de dos pisos cerca del parque."',
+      '- **Hogar o familia:** "A las seis de la tarde todos regresan a casa."',
+      '- **Comercio o institución:** "Esa casa de cambios ofrece buena tasa hoy."',
+      '- **Linaje o dinastía:** "La casa real asistió a la ceremonia oficial."',
     ].join("\n"),
   },
 ];
@@ -184,10 +205,13 @@ export function buildDefinitionDraft(
     return [`**${heading}**`, "", known.body].join("\n");
   }
 
-  const relevantHits = hits.filter((hit) => hitMentionsTerm(hit, term));
+  const relevantHits = hits.filter(
+    (hit) => hitMentionsTerm(hit, term) && !isAcronymOrForeignCollision(hit, term),
+  );
   const sentences = relevantHits
     .flatMap((hit) => splitUsefulSentences(cleanHitText(hit.chunk.text)))
-    .filter((sentence) => isUsableDefinitionSentence(sentence, term));
+    .filter((sentence) => isUsableDefinitionSentence(sentence, term))
+    .filter((sentence) => !isEnglishHeavy(sentence));
   const unique = dedupeSentences(sentences).slice(0, 8);
   if (!unique.length) return "";
 
@@ -258,9 +282,109 @@ export function isUsableDefinitionSentence(sentence: string, term: string): bool
   if (sentence.length < 40) return false;
   if (isDictionaryNoise(sentence)) return false;
   if (isTruncatedSentence(sentence)) return false;
+  if (isEnglishHeavy(sentence)) return false;
   if (!sentenceMentionsTerm(sentence, term)) return false;
+  // Evita municipios/acrónimos: "Casas Municipality", "CASAS provides testing…"
+  if (/\bmunicipality\b|\bcounty\b|\bassessment systems\b|\bweb trainings?\b|\btopspro\b/i.test(sentence)) {
+    return false;
+  }
   return true;
 }
+
+/** Rechaza choques tipo CASAS (acrónimo EN) cuando el usuario pide «casas» en español. */
+export function isAcronymOrForeignCollision(hit: RagHit, term: string): boolean {
+  const title = hit.chunk.title || "";
+  const text = hit.chunk.text || "";
+  const blob = `${title} ${text}`;
+  const t = term.trim();
+  if (!t) return false;
+  // Título/acrónimo en mayúsculas distinto del uso español en minúsculas.
+  if (t === t.toLowerCase() && new RegExp(`\\b${escapeRegExp(t.toUpperCase())}\\b`).test(blob)) {
+    if (/\b(assessment|systems|training|enterprise|curriculum|managers)\b/i.test(blob)) return true;
+  }
+  if (/\bmunicipality\b|\bcomprehensive adult student\b|\btopspro\b/i.test(blob)) return true;
+  // Bloque casi solo en inglés.
+  if (isEnglishHeavy(blob.slice(0, 400))) return true;
+  return false;
+}
+
+export function isEnglishHeavy(text: string): boolean {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-záéíóúüñ'\s]/gi, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length < 6) return false;
+  const english = words.filter((word) => ENGLISH_MARKERS.has(word)).length;
+  const spanish = words.filter((word) => SPANISH_MARKERS.has(word)).length;
+  if (english >= 3 && english > spanish * 1.5) return true;
+  // Muchas palabras ASCII típicas EN sin tildes y con marcadores.
+  return english >= 4 && spanish === 0;
+}
+
+const ENGLISH_MARKERS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "that",
+  "this",
+  "are",
+  "is",
+  "of",
+  "in",
+  "to",
+  "provides",
+  "testing",
+  "systems",
+  "training",
+  "trainings",
+  "student",
+  "adult",
+  "comprehensive",
+  "municipality",
+  "encompassing",
+  "square",
+  "kilometers",
+  "because",
+  "tests",
+  "track",
+  "progress",
+  "data",
+  "managers",
+  "enterprise",
+  "web",
+]);
+
+const SPANISH_MARKERS = new Set([
+  "el",
+  "la",
+  "los",
+  "las",
+  "de",
+  "del",
+  "una",
+  "uno",
+  "que",
+  "por",
+  "para",
+  "con",
+  "como",
+  "más",
+  "tambien",
+  "también",
+  "es",
+  "son",
+  "se",
+  "al",
+  "en",
+  "vivienda",
+  "hogar",
+  "familia",
+  "edificacion",
+  "edificación",
+]);
 
 function isTruncatedSentence(sentence: string): boolean {
   const text = sentence.trim();
