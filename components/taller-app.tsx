@@ -2,33 +2,32 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlignLeft,
   ArrowUp,
-  BookOpen,
-  Calculator,
   Clock3,
-  Code2,
-  History,
-  Languages,
   Library,
-  ListChecks,
   MessageCircle,
   Mic,
   Palette,
   PanelRight,
-  PenLine,
   Plus,
-  Search,
   Square,
   Trash2,
   Wifi,
   X,
 } from "lucide-react";
-import { ACTIVITIES, ACTIVITY_MAP, MODEL_LABEL } from "@/lib/activities";
+import { ACTIVITY_MAP, MODEL_LABEL } from "@/lib/activities";
 import { syncLessonToEngine } from "@/lib/rag/sync-lesson";
 import { STYLE_QUICK_PROMPTS } from "@/lib/style";
-import { looksLikeMath, SPECIALTY_IDS } from "@/lib/tools/route";
-import { formatHistoryTime, pushHistory, sanitizeHistory, type HistoryEntry } from "@/lib/history";
+import { looksLikeMath } from "@/lib/tools/route";
+import { formatHistoryTime } from "@/lib/history";
+import {
+  createEmptySession,
+  ensureSessions,
+  sanitizeSessions,
+  sessionsFromThreads,
+  titleFromMessages,
+  type ChatSession,
+} from "@/lib/sessions";
 import {
   parseCorrectionMessage,
   sanitizeLessons,
@@ -58,35 +57,19 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 
-const STORAGE_KEY = "taller-receta-v2";
+const STORAGE_KEY = "taller-receta-v3";
 const EMPTY_THREAD: StoredMessage[] = [];
-const ICONS = {
-  preguntar: MessageCircle,
-  estudiar: BookOpen,
-  programar: Code2,
-  escribir: PenLine,
-  calcular: Calculator,
-  organizar: ListChecks,
-  traducir: Languages,
-  resumir: AlignLeft,
-  investigar: Search,
-} as const;
+const activity: ActivityId = "preguntar";
 
-const SPECIALTY_ACTIVITIES = ACTIVITIES.filter((item) =>
-  (SPECIALTY_IDS as readonly string[]).includes(item.id),
-);
-
-type Threads = Partial<Record<ActivityId, StoredMessage[]>>;
 type Status = "loading" | "taller" | "model";
 
 export function TallerApp() {
-  const [activity, setActivity] = useState<ActivityId>("preguntar");
   const [model, setModel] = useState<ModelId>("flash");
   const [effort, setEffort] = useState<Effort>("high");
   const [thinking, setThinking] = useState(true);
   const [skin, setSkin] = useState<SkinId>("brisa");
-  const [threads, setThreads] = useState<Threads>({});
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [sessions, setSessions] = useState<ChatSession[]>(() => [createEmptySession()]);
+  const [activeSessionId, setActiveSessionId] = useState("");
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [documents, setDocuments] = useState<RagDocument[]>([]);
   const [draft, setDraft] = useState("");
@@ -95,7 +78,6 @@ export function TallerApp() {
   const [status, setStatus] = useState<Status>("loading");
   const [activitiesOpen, setActivitiesOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [skinsOpen, setSkinsOpen] = useState(false);
   const [docTitle, setDocTitle] = useState("");
@@ -115,24 +97,38 @@ export function TallerApp() {
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const current = ACTIVITY_MAP[activity];
-  const thread = useMemo(() => threads[activity] ?? EMPTY_THREAD, [threads, activity]);
+  const activeSessionIdRef = useRef(activeSessionId);
+  const current = ACTIVITY_MAP.preguntar;
+  const thread = useMemo(
+    () => sessions.find((session) => session.id === activeSessionId)?.messages ?? EMPTY_THREAD,
+    [sessions, activeSessionId],
+  );
+  const previousChats = useMemo(
+    () =>
+      [...sessions]
+        .filter((session) => session.messages.length > 0 || session.id === activeSessionId)
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+    [sessions, activeSessionId],
+  );
 
   /* eslint-disable react-hooks/set-state-in-effect -- restore localStorage after hydration */
   useEffect(() => {
     const stored = readStorage();
     if (stored) {
-      setActivity(stored.activity);
       setModel(stored.model);
       setEffort(stored.effort);
       setThinking(stored.thinking);
       setSkin(stored.skin);
-      setThreads(stored.threads);
-      setHistory(stored.history);
+      const ensured = ensureSessions(stored.sessions, stored.activeSessionId);
+      setSessions(ensured.sessions);
+      setActiveSessionId(ensured.activeId);
       setLessons(stored.lessons);
       setDocuments(stored.documents.length ? stored.documents : seedDocuments());
       document.documentElement.dataset.skin = stored.skin;
     } else {
+      const ensured = ensureSessions([createEmptySession()]);
+      setSessions(ensured.sessions);
+      setActiveSessionId(ensured.activeId);
       setDocuments(seedDocuments());
       document.documentElement.dataset.skin = "brisa";
     }
@@ -151,21 +147,25 @@ export function TallerApp() {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
+  useEffect(() => {
     if (!ready) return;
     document.documentElement.dataset.skin = skin;
   }, [skin, ready]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !activeSessionId) return;
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ activity, model, effort, thinking, skin, threads, history, lessons, documents }),
+      JSON.stringify({ model, effort, thinking, skin, sessions, activeSessionId, lessons, documents }),
     );
-  }, [activity, model, effort, thinking, skin, threads, history, lessons, documents, ready]);
+  }, [model, effort, thinking, skin, sessions, activeSessionId, lessons, documents, ready]);
 
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
-  }, [thread, streaming, activity, learnNote]);
+  }, [thread, streaming, activeSessionId, learnNote]);
 
   const previewPrompt = useMemo(() => {
     const historyTurns = thread.map((message) => ({ role: message.role, content: message.content }));
@@ -174,33 +174,65 @@ export function TallerApp() {
     return composeRecipePreview({ activity, model, effort, thinking, messages });
   }, [activity, model, effort, thinking, thread, draft]);
 
-  function chooseActivity(next: ActivityId) {
+  function updateActiveMessages(updater: (messages: StoredMessage[]) => StoredMessage[]) {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return;
+    setSessions((current) =>
+      current.map((session) => {
+        if (session.id !== sessionId) return session;
+        const messages = updater(session.messages);
+        return {
+          ...session,
+          messages,
+          title: titleFromMessages(messages),
+          updatedAt: Date.now(),
+        };
+      }),
+    );
+  }
+
+  function newChat() {
     if (streaming) return;
-    setActivity(next);
+    const next = createEmptySession();
+    setSessions((current) => {
+      const active = current.find((session) => session.id === activeSessionId);
+      const kept =
+        active && active.messages.length === 0
+          ? current.filter((session) => session.id !== activeSessionId)
+          : current;
+      return [next, ...kept].slice(0, 40);
+    });
+    setActiveSessionId(next.id);
+    setDraft("");
     setError("");
+    setCorrectingIndex(null);
     setActivitiesOpen(false);
+  }
+
+  function openChat(sessionId: string) {
+    if (streaming) return;
+    setActiveSessionId(sessionId);
+    setDraft("");
+    setError("");
+    setCorrectingIndex(null);
+    setActivitiesOpen(false);
+  }
+
+  function deleteChat(sessionId: string) {
+    if (streaming) return;
+    const remaining = sessions.filter((session) => session.id !== sessionId);
+    const ensured = ensureSessions(remaining);
+    setSessions(ensured.sessions);
+    if (sessionId === activeSessionId) {
+      setActiveSessionId(ensured.activeId);
+    }
+    setDraft("");
+    setError("");
   }
 
   function chooseSkin(next: SkinId) {
     setSkin(next);
     document.documentElement.dataset.skin = next;
-  }
-
-  function clearThread() {
-    if (streaming) return;
-    setThreads((currentThreads) => ({ ...currentThreads, [activity]: [] }));
-    setError("");
-  }
-
-  function clearHistory() {
-    setHistory([]);
-  }
-
-  function reopenHistory(entry: HistoryEntry) {
-    if (streaming) return;
-    setActivity(entry.activity);
-    setHistoryOpen(false);
-    setDraft(entry.query);
   }
 
   function learnFromCorrection(question: string, answer: string, reason?: string) {
@@ -293,7 +325,7 @@ export function TallerApp() {
   }
 
   function markGood(assistantIndex: number) {
-    const list = threads[activity] ?? [];
+    const list = thread;
     const assistant = list[assistantIndex];
     const question = [...list.slice(0, assistantIndex)].reverse().find((message) => message.role === "user");
     if (!assistant || assistant.role !== "assistant" || !question) return;
@@ -301,13 +333,12 @@ export function TallerApp() {
   }
 
   function submitCorrection(assistantIndex: number) {
-    const list = threads[activity] ?? [];
+    const list = thread;
     const question = [...list.slice(0, assistantIndex)].reverse().find((message) => message.role === "user");
     const answer = correctionDraft.trim();
     if (!question || !answer) return;
     learnFromCorrection(question.content, answer, "Corregido con Mal");
-    setThreads((currentThreads) => {
-      const current = currentThreads[activity] ?? [];
+    updateActiveMessages((current) => {
       const next = [...current];
       if (next[assistantIndex]?.role === "assistant") {
         next[assistantIndex] = {
@@ -315,7 +346,7 @@ export function TallerApp() {
           content: `${answer}\n\n_Aprendí esta corrección. Gracias._`,
         };
       }
-      return { ...currentThreads, [activity]: next };
+      return next;
     });
     setCorrectingIndex(null);
     setCorrectionDraft("");
@@ -353,18 +384,13 @@ export function TallerApp() {
     if (streaming) return;
     setError("");
     setLearnNote("");
-    const target: ActivityId = activity === "preguntar" ? "preguntar" : "calcular";
-    setActivity(target);
     const previewUrl = URL.createObjectURL(file);
     const userMessage: StoredMessage = {
       role: "user",
       content: `📷 Imagen: ${file.name}\n(Problema matemático / apunte)`,
     };
     const placeholder: StoredMessage = { role: "assistant", content: "", mode: "taller" };
-    setThreads((current) => ({
-      ...current,
-      [target]: [...(current[target] ?? []), userMessage, placeholder],
-    }));
+    updateActiveMessages((current) => [...current, userMessage, placeholder]);
     setStreaming(true);
     try {
       const body = new FormData();
@@ -375,24 +401,17 @@ export function TallerApp() {
         json.answer ||
         json.error ||
         "No pude leer la imagen. Arranca el motor Python y `ollama pull qwen2.5-vl:3b`.";
-      if (target === "preguntar" && !answer.includes("Herramienta:")) {
+      if (!answer.includes("Herramienta:")) {
         answer = `_Herramienta: Calcular_\n\n${answer}`;
       }
-      setThreads((current) => {
-        const list = [...(current[target] ?? [])];
+      updateActiveMessages((current) => {
+        const list = [...current];
         const last = list[list.length - 1];
         if (last?.role === "assistant") {
           list[list.length - 1] = { ...last, content: answer, mode: "taller" };
         }
-        return { ...current, [target]: list };
+        return list;
       });
-      setHistory((entries) =>
-        pushHistory(entries, {
-          activity: target,
-          query: `imagen:${file.name}`,
-          preview: answer.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, 180),
-        }),
-      );
       if (json.ok) {
         setLearnNote("Guardé la imagen, el LaTeX y la solución SymPy en la memoria del motor.");
         window.setTimeout(() => setLearnNote(""), 5000);
@@ -483,8 +502,8 @@ export function TallerApp() {
     const content = prepared.trim();
     if (!content) return;
 
-    // Calcular / Preguntar (si parece cuenta): prefer SymPy engine.
-    if (activity === "calcular" || (activity === "preguntar" && looksLikeMath(content))) {
+    // Si parece cuenta: prefer SymPy engine.
+    if (looksLikeMath(content)) {
       setStreaming(true);
       setDraft("");
       try {
@@ -499,9 +518,7 @@ export function TallerApp() {
           remembered?: boolean;
         };
         if (json.answer) {
-          const mathActivity = activity === "preguntar" ? "preguntar" : "calcular";
-          const answer =
-            mathActivity === "preguntar" && !json.answer!.includes("Herramienta:")
+          const answer = !json.answer!.includes("Herramienta:")
               ? `_Herramienta: Calcular_\n\n${json.answer}`
               : json.answer!;
           const historyTurns: StoredMessage[] = [
@@ -509,14 +526,7 @@ export function TallerApp() {
             { role: "user", content },
             { role: "assistant", content: answer, mode: "taller" },
           ];
-          setThreads((currentThreads) => ({ ...currentThreads, [mathActivity]: historyTurns }));
-          setHistory((entries) =>
-            pushHistory(entries, {
-              activity: mathActivity,
-              query: content,
-              preview: answer.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, 180),
-            }),
-          );
+          updateActiveMessages(() => historyTurns);
           if (json.remembered) {
             setLearnNote("Reutilicé un problema parecido de la memoria matemática.");
             window.setTimeout(() => setLearnNote(""), 4000);
@@ -548,10 +558,7 @@ export function TallerApp() {
           ].join("\n"),
           mode: "taller",
         };
-        setThreads((currentThreads) => ({
-          ...currentThreads,
-          [activity]: [...thread, { role: "user", content }, ack],
-        }));
+        updateActiveMessages((current) => [...current, { role: "user", content }, ack]);
         setDraft("");
         return;
       }
@@ -559,24 +566,33 @@ export function TallerApp() {
 
     const historyTurns = [...thread, { role: "user" as const, content }];
     const placeholder: StoredMessage = { role: "assistant", content: "", reasoning: "", mode: "taller" };
-    setThreads((currentThreads) => ({ ...currentThreads, [activity]: [...historyTurns, placeholder] }));
+    updateActiveMessages(() => [...historyTurns, placeholder]);
     setDraft("");
     setStreaming(true);
     const controller = new AbortController();
     abortRef.current = controller;
     const target = activity;
+    const sessionId = activeSessionIdRef.current;
     let answerPreview = "";
     let sawDone = false;
 
     const patchAssistant = (patch: Partial<StoredMessage>) => {
-      setThreads((currentThreads) => {
-        const list = currentThreads[target] ?? [];
-        const last = list[list.length - 1];
-        if (!last || last.role !== "assistant") return currentThreads;
-        const next = [...list];
-        next[next.length - 1] = { ...last, ...patch };
-        return { ...currentThreads, [target]: next };
-      });
+      setSessions((currentSessions) =>
+        currentSessions.map((session) => {
+          if (session.id !== sessionId) return session;
+          const list = session.messages;
+          const last = list[list.length - 1];
+          if (!last || last.role !== "assistant") return session;
+          const next = [...list];
+          next[next.length - 1] = { ...last, ...patch };
+          return {
+            ...session,
+            messages: next,
+            title: titleFromMessages(next),
+            updatedAt: Date.now(),
+          };
+        }),
+      );
     };
 
     try {
@@ -649,22 +665,30 @@ export function TallerApp() {
                 setLessons((current) => touchLesson(current, payload.learnedFrom!));
               }
             }
-            setThreads((currentThreads) => {
-              const list = currentThreads[target] ?? [];
-              const last = list[list.length - 1];
-              if (!last || last.role !== "assistant") return currentThreads;
-              const next = [...list];
-              next[next.length - 1] = {
-                ...last,
-                content: payload.type === "content" ? answerPreview : last.content,
-                reasoning:
-                  payload.type === "reasoning" ? `${last.reasoning ?? ""}${payload.text ?? ""}` : last.reasoning,
-                mode: payload.type === "done" ? payload.mode ?? last.mode : last.mode,
-                images: payload.type === "done" && payload.images ? payload.images : last.images,
-                sources: payload.type === "done" && payload.sources ? payload.sources : last.sources,
-              };
-              return { ...currentThreads, [target]: next };
-            });
+            setSessions((currentSessions) =>
+              currentSessions.map((session) => {
+                if (session.id !== sessionId) return session;
+                const list = session.messages;
+                const last = list[list.length - 1];
+                if (!last || last.role !== "assistant") return session;
+                const next = [...list];
+                next[next.length - 1] = {
+                  ...last,
+                  content: payload.type === "content" ? answerPreview : last.content,
+                  reasoning:
+                    payload.type === "reasoning" ? `${last.reasoning ?? ""}${payload.text ?? ""}` : last.reasoning,
+                  mode: payload.type === "done" ? payload.mode ?? last.mode : last.mode,
+                  images: payload.type === "done" && payload.images ? payload.images : last.images,
+                  sources: payload.type === "done" && payload.sources ? payload.sources : last.sources,
+                };
+                return {
+                  ...session,
+                  messages: next,
+                  title: titleFromMessages(next),
+                  updatedAt: Date.now(),
+                };
+              }),
+            );
           }
         }
       }
@@ -673,14 +697,6 @@ export function TallerApp() {
           "La conexión se cerró antes de recibir la respuesta. Revisa que Ollama esté en marcha e inténtalo de nuevo.";
         setError(fallback);
         patchAssistant({ content: fallback, mode: "taller" });
-      } else {
-        setHistory((entries) =>
-          pushHistory(entries, {
-            activity: target,
-            query: content,
-            preview: answerPreview.replace(/\*\*/g, "").replace(/\s+/g, " ").trim() || "Respuesta del taller",
-          }),
-        );
       }
       if (learnedFrom) {
         setLearnNote("Usé una corrección que aprendí antes.");
@@ -715,15 +731,6 @@ export function TallerApp() {
     />
   );
 
-  const historyList = (
-    <HistoryPanel
-      entries={history}
-      onOpen={reopenHistory}
-      onClear={clearHistory}
-      disabled={streaming}
-    />
-  );
-
   return (
     <div className="flex h-dvh text-foreground">
       <aside className="glass-panel m-3 hidden w-[17.5rem] shrink-0 flex-col overflow-hidden rounded-[1.4rem] md:flex">
@@ -733,30 +740,86 @@ export function TallerApp() {
             Un solo chat. Pregunta lo que necesites.
           </p>
         </div>
-        <nav className="flex-1 space-y-3 overflow-y-auto px-3 pb-3" aria-label="Oficios">
-          <ActivityButton
-            id="preguntar"
-            selected={activity === "preguntar"}
+        <nav className="flex-1 space-y-3 overflow-y-auto px-3 pb-3" aria-label="Chats">
+          <button
+            type="button"
             disabled={streaming}
-            onSelect={chooseActivity}
-            delay={0}
-            featured
-          />
+            onClick={newChat}
+            className={`animate-rise flex w-full items-start gap-3 rounded-xl px-2.5 py-2.5 text-left transition disabled:opacity-50 ${
+              thread.length === 0
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "border border-primary/25 bg-primary/8 hover:bg-primary/12"
+            }`}
+          >
+            <span className={`mt-0.5 font-mono text-[11px] ${thread.length === 0 ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+              ★
+            </span>
+            <span className="min-w-0">
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <MessageCircle className="size-3.5" />
+                Preguntar
+              </span>
+              <span className={`mt-0.5 block text-xs leading-4 ${thread.length === 0 ? "text-primary-foreground/75" : "text-muted-foreground"}`}>
+                Un solo chat: calcula, investiga, escribe o programa según lo que digas.
+              </span>
+            </span>
+          </button>
           <div>
-            <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Especialidades
-            </p>
+            <div className="mb-1 flex items-center justify-between gap-2 px-2">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                Chats anteriores
+              </p>
+              <button
+                type="button"
+                disabled={streaming}
+                onClick={newChat}
+                className="text-[11px] font-medium text-primary hover:underline disabled:opacity-50"
+              >
+                + Nuevo
+              </button>
+            </div>
             <div className="space-y-1">
-              {SPECIALTY_ACTIVITIES.map((item, index) => (
-                <ActivityButton
-                  key={item.id}
-                  id={item.id}
-                  selected={item.id === activity}
-                  disabled={streaming}
-                  onSelect={chooseActivity}
-                  delay={(index + 1) * 40}
-                />
-              ))}
+              {previousChats.length === 0 ? (
+                <p className="px-2 py-3 text-xs leading-5 text-muted-foreground">
+                  Cuando envíes un mensaje, el chat queda aquí para volver o borrarlo.
+                </p>
+              ) : (
+                previousChats.map((session) => {
+                  const selected = session.id === activeSessionId;
+                  return (
+                    <div
+                      key={session.id}
+                      className={`group flex items-start gap-1 rounded-xl px-1.5 py-1 ${
+                        selected ? "bg-muted" : "hover:bg-muted/70"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        disabled={streaming}
+                        onClick={() => openChat(session.id)}
+                        className="min-w-0 flex-1 rounded-lg px-1.5 py-1.5 text-left disabled:opacity-50"
+                      >
+                        <p className="truncate text-sm font-medium">{session.title}</p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          {formatHistoryTime(session.updatedAt)}
+                          {session.messages.length
+                            ? ` · ${session.messages.length} msg`
+                            : " · vacío"}
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={streaming}
+                        aria-label={`Eliminar ${session.title}`}
+                        onClick={() => deleteChat(session.id)}
+                        className="mt-1 rounded-md p-1.5 text-muted-foreground opacity-70 transition hover:bg-background hover:text-destructive group-hover:opacity-100 disabled:opacity-40"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </nav>
@@ -764,11 +827,6 @@ export function TallerApp() {
           <Button variant="outline" className="w-full justify-start" onClick={() => setSkinsOpen(true)}>
             <Palette />
             Interfaces
-          </Button>
-          <Button variant="ghost" className="w-full justify-start" onClick={() => setHistoryOpen(true)}>
-            <History />
-            Historial
-            {history.length > 0 && <Badge className="ml-auto" variant="secondary">{history.length}</Badge>}
           </Button>
           <Button variant="ghost" className="w-full justify-start" onClick={() => setKnowledgeOpen(true)}>
             <Library />
@@ -799,9 +857,6 @@ export function TallerApp() {
           <StatusBadge status={status} />
           <Button variant="ghost" size="icon" className="xl:hidden" onClick={() => setRecipeOpen(true)} aria-label="Ver la receta">
             <PanelRight />
-          </Button>
-          <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setHistoryOpen(true)} aria-label="Historial">
-            <History />
           </Button>
           <Button variant="ghost" size="icon" onClick={() => setKnowledgeOpen(true)} aria-label="Conocimiento RAG">
             <Library />
@@ -841,9 +896,9 @@ export function TallerApp() {
           >
             {thinking ? "Pensando" : "Directo"}
           </Button>
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={clearThread} disabled={streaming || thread.length === 0}>
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={newChat} disabled={streaming}>
             <Plus />
-            Nueva
+            Nuevo chat
           </Button>
         </div>
 
@@ -862,11 +917,10 @@ export function TallerApp() {
           <div className="mx-auto flex max-w-2xl flex-col gap-4">
             {thread.length === 0 ? (
               <WelcomeState
-                activityLabel={current.label}
                 starters={current.starters}
-                recent={history.filter((entry) => entry.activity === activity).slice(0, 3)}
+                recent={previousChats.filter((session) => session.id !== activeSessionId && session.messages.length > 0).slice(0, 3)}
                 onPick={(starter) => void send(starter)}
-                onOpenHistory={reopenHistory}
+                onOpenChat={openChat}
                 onBrowseSkins={() => setSkinsOpen(true)}
               />
             ) : (
@@ -1003,31 +1057,40 @@ export function TallerApp() {
       <Sheet open={activitiesOpen} onOpenChange={setActivitiesOpen}>
         <SheetContent side="left" className="w-80">
           <SheetHeader>
-            <SheetTitle className="font-heading italic">Menú</SheetTitle>
+            <SheetTitle className="font-heading italic">Chats</SheetTitle>
           </SheetHeader>
-          <div className="space-y-3 px-3">
-            <ActivityButton
-              id="preguntar"
-              selected={activity === "preguntar"}
-              disabled={streaming}
-              onSelect={chooseActivity}
-              featured
-            />
-            <div>
-              <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                Especialidades
-              </p>
-              <div className="space-y-1">
-                {SPECIALTY_ACTIVITIES.map((item) => (
-                  <ActivityButton
-                    key={item.id}
-                    id={item.id}
-                    selected={item.id === activity}
+          <div className="space-y-3 px-3 pb-6">
+            <Button className="w-full justify-start" onClick={newChat} disabled={streaming}>
+              <Plus />
+              Nuevo chat
+            </Button>
+            <div className="space-y-1">
+              {previousChats.map((session) => (
+                <div key={session.id} className="flex items-center gap-1">
+                  <button
+                    type="button"
                     disabled={streaming}
-                    onSelect={chooseActivity}
-                  />
-                ))}
-              </div>
+                    onClick={() => openChat(session.id)}
+                    className={`min-w-0 flex-1 rounded-xl px-3 py-2 text-left text-sm ${
+                      session.id === activeSessionId ? "bg-muted font-medium" : "hover:bg-muted/70"
+                    }`}
+                  >
+                    <span className="block truncate">{session.title}</span>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                      {formatHistoryTime(session.updatedAt)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={streaming}
+                    aria-label={`Eliminar ${session.title}`}
+                    onClick={() => deleteChat(session.id)}
+                    className="rounded-md p-2 text-muted-foreground hover:text-destructive disabled:opacity-40"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         </SheetContent>
@@ -1039,15 +1102,6 @@ export function TallerApp() {
             <SheetTitle className="font-heading italic">Receta</SheetTitle>
           </SheetHeader>
           {recipe}
-        </SheetContent>
-      </Sheet>
-
-      <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-md">
-          <SheetHeader>
-            <SheetTitle className="font-heading italic">Historial</SheetTitle>
-          </SheetHeader>
-          <div className="px-1">{historyList}</div>
         </SheetContent>
       </Sheet>
 
@@ -1208,67 +1262,17 @@ function SkinGallery({ current, onSelect }: { current: SkinId; onSelect: (id: Sk
   );
 }
 
-function ActivityButton({
-  id,
-  selected,
-  disabled,
-  onSelect,
-  delay = 0,
-  featured = false,
-}: {
-  id: ActivityId;
-  selected: boolean;
-  disabled: boolean;
-  onSelect: (id: ActivityId) => void;
-  delay?: number;
-  featured?: boolean;
-}) {
-  const item = ACTIVITY_MAP[id];
-  const Icon = ICONS[id];
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => onSelect(id)}
-      className={`animate-rise flex w-full items-start gap-3 rounded-xl px-2.5 py-2.5 text-left transition disabled:opacity-50 ${
-        selected
-          ? "bg-primary text-primary-foreground shadow-sm"
-          : featured
-            ? "border border-primary/25 bg-primary/8 hover:bg-primary/12"
-            : "hover:bg-muted"
-      }`}
-      style={{ animationDelay: `${delay}ms` }}
-      aria-current={selected ? "page" : undefined}
-    >
-      <span className={`mt-0.5 font-mono text-[11px] ${selected ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
-        {featured ? "★" : item.number}
-      </span>
-      <span className="min-w-0">
-        <span className="flex items-center gap-1.5 text-sm font-medium">
-          <Icon className="size-3.5" />
-          {item.label}
-        </span>
-        <span className={`mt-0.5 block text-xs leading-4 ${selected ? "text-primary-foreground/75" : "text-muted-foreground"}`}>
-          {item.blurb}
-        </span>
-      </span>
-    </button>
-  );
-}
-
 function WelcomeState({
-  activityLabel,
   starters,
   recent,
   onPick,
-  onOpenHistory,
+  onOpenChat,
   onBrowseSkins,
 }: {
-  activityLabel: string;
   starters: string[];
-  recent: HistoryEntry[];
+  recent: ChatSession[];
   onPick: (starter: string) => void;
-  onOpenHistory: (entry: HistoryEntry) => void;
+  onOpenChat: (sessionId: string) => void;
   onBrowseSkins: () => void;
 }) {
   return (
@@ -1278,17 +1282,8 @@ function WelcomeState({
         ¿En qué te puedo ayudar hoy?
       </p>
       <p className="mt-3 max-w-lg text-sm leading-6 text-muted-foreground">
-        {activityLabel === "Preguntar" ? (
-          <>
-            Todo en un solo chat: cuentas, dudas, textos o código. Taller elige la herramienta. También puedes usar una especialidad o
-            cambiar la cara de Taller.
-          </>
-        ) : (
-          <>
-            Estás en <span className="font-medium text-foreground">{activityLabel}</span>. Escribe abajo o elige un comienzo. También
-            puedes volver a <span className="font-medium text-foreground">Preguntar</span> para no elegir oficio.
-          </>
-        )}
+        Todo en un solo chat: cuentas, dudas, textos o código. Taller elige la herramienta. Usa Nuevo chat para empezar otra
+        conversación y vuelve a los chats anteriores desde la barra lateral.
       </p>
       <div className="mt-5 flex flex-wrap gap-2">
         <Button variant="secondary" onClick={onBrowseSkins}>
@@ -1313,75 +1308,23 @@ function WelcomeState({
         <div className="mt-8">
           <p className="mb-3 flex items-center gap-2 text-sm font-medium">
             <Clock3 className="size-4" />
-            Reciente en este oficio
+            Chats anteriores
           </p>
           <div className="flex flex-col gap-2">
-            {recent.map((entry) => (
+            {recent.map((session) => (
               <button
-                key={entry.id}
+                key={session.id}
                 type="button"
-                onClick={() => onOpenHistory(entry)}
+                onClick={() => onOpenChat(session.id)}
                 className="rounded-xl border border-border/80 bg-background/50 px-3 py-2 text-left transition hover:border-primary/30"
               >
-                <p className="truncate text-sm">{entry.query}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{formatHistoryTime(entry.at)}</p>
+                <p className="truncate text-sm">{session.title}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{formatHistoryTime(session.updatedAt)}</p>
               </button>
             ))}
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function HistoryPanel({
-  entries,
-  onOpen,
-  onClear,
-  disabled,
-}: {
-  entries: HistoryEntry[];
-  onOpen: (entry: HistoryEntry) => void;
-  onClear: () => void;
-  disabled: boolean;
-}) {
-  if (entries.length === 0) {
-    return (
-      <div className="px-3 py-6 text-sm leading-6 text-muted-foreground">
-        Aún no hay búsquedas. Cuando preguntes algo, queda guardado aquí para volver a abrirlo.
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-3 px-3 pb-4">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">{entries.length} búsqueda{entries.length === 1 ? "" : "s"}</p>
-        <Button variant="ghost" size="sm" onClick={onClear} disabled={disabled}>
-          <Trash2 />
-          Borrar
-        </Button>
-      </div>
-      <div className="space-y-2">
-        {entries.map((entry) => {
-          const activity = ACTIVITY_MAP[entry.activity];
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              disabled={disabled}
-              onClick={() => onOpen(entry)}
-              className="w-full rounded-xl border border-border bg-card/70 px-3 py-3 text-left transition hover:border-primary/35 disabled:opacity-50"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <Badge variant="outline">{activity.label}</Badge>
-                <span className="text-[11px] text-muted-foreground">{formatHistoryTime(entry.at)}</span>
-              </div>
-              <p className="mt-2 line-clamp-2 text-sm leading-5">{entry.query}</p>
-              <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{entry.preview}</p>
-            </button>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -1628,85 +1571,51 @@ function HowItWorks() {
 }
 
 function readStorage(): {
-  activity: ActivityId;
   model: ModelId;
   effort: Effort;
   thinking: boolean;
   skin: SkinId;
-  threads: Threads;
-  history: HistoryEntry[];
+  sessions: ChatSession[];
+  activeSessionId: string | null;
   lessons: Lesson[];
   documents: RagDocument[];
 } | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem("taller-receta-v1");
+    const raw =
+      localStorage.getItem(STORAGE_KEY) ??
+      localStorage.getItem("taller-receta-v2") ??
+      localStorage.getItem("taller-receta-v1");
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
-      activity?: ActivityId;
       model?: ModelId;
       effort?: Effort;
       thinking?: boolean;
       skin?: string;
-      threads?: Threads;
-      history?: unknown;
+      sessions?: unknown;
+      activeSessionId?: string;
+      threads?: Partial<Record<ActivityId, StoredMessage[]>>;
       lessons?: unknown;
       documents?: unknown;
     };
-    if (!parsed.activity || !(parsed.activity in ACTIVITY_MAP)) return null;
     if (parsed.model !== "flash" && parsed.model !== "pro") return null;
     if (parsed.effort !== "low" && parsed.effort !== "high" && parsed.effort !== "max") return null;
     const skin = parsed.skin && isSkinId(parsed.skin) ? parsed.skin : "brisa";
+    const fromSessions = sanitizeSessions(parsed.sessions);
+    const sessions =
+      fromSessions.length > 0
+        ? fromSessions
+        : sessionsFromThreads((parsed.threads as Partial<Record<ActivityId, StoredMessage[]>>) ?? {});
     return {
-      activity: parsed.activity,
       model: parsed.model,
       effort: parsed.effort,
       thinking: Boolean(parsed.thinking),
       skin,
-      threads: sanitizeThreads(parsed.threads ?? {}),
-      history: sanitizeHistory(parsed.history),
+      sessions,
+      activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : null,
       lessons: sanitizeLessons(parsed.lessons),
       documents: sanitizeDocuments(parsed.documents),
     };
   } catch {
     return null;
   }
-}
-
-function sanitizeThreads(threads: Threads): Threads {
-  const clean: Threads = {};
-  for (const activity of Object.keys(ACTIVITY_MAP) as ActivityId[]) {
-    const list = threads[activity];
-    if (!Array.isArray(list)) continue;
-    clean[activity] = list
-      .filter(
-        (message) =>
-          message && (message.role === "user" || message.role === "assistant") && typeof message.content === "string",
-      )
-      .slice(-16)
-      .map((message) => ({
-        role: message.role,
-        content: message.content.slice(0, 12_000),
-        reasoning: typeof message.reasoning === "string" ? message.reasoning.slice(0, 20_000) : undefined,
-        mode: message.mode === "model" ? "model" : message.mode === "taller" ? "taller" : undefined,
-        images: Array.isArray(message.images)
-          ? message.images
-              .filter((image) => image && typeof image.url === "string" && image.url.startsWith("http"))
-              .slice(0, 3)
-              .map((image) => ({
-                url: image.url,
-                title: typeof image.title === "string" ? image.title.slice(0, 120) : undefined,
-              }))
-          : undefined,
-        sources: Array.isArray(message.sources)
-          ? message.sources
-              .filter((source) => source && typeof source.title === "string")
-              .slice(0, 12)
-              .map((source) => ({
-                title: source.title.slice(0, 160),
-                url: typeof source.url === "string" ? source.url.slice(0, 500) : "",
-              }))
-          : undefined,
-      }));
-  }
-  return clean;
 }
