@@ -294,7 +294,7 @@ export function isTrivialOverviewQuestion(question: string): boolean {
   const q = question.trim();
   return (
     /^\s*\d+\s*%\s*de\s*\d+/i.test(q) ||
-    /cu[aá]nto\s+es\s+\d+\s*%\s*de\s+\d+/i.test(q) ||
+    /cu[aá]nto\s+es\s+(el\s+)?\d+\s*%\s*de\s+\d+/i.test(q) ||
     /^\s*\d+\s*[\+\-\*\/x×÷]\s*\d+\s*\??\s*$/i.test(q) ||
     /cu[aá]nto\s+es\s+\d+\s*[\+\-\*\/x×÷]\s*\d+/i.test(q)
   );
