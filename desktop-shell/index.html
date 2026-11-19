@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumen</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: #0f1419;
+        color: #e8eef5;
+        display: grid;
+        place-items: center;
+      }
+      p {
+        opacity: 0.85;
+      }
+    </style>
+    <script>
+      // El sidecar Next sirve la UI real en 127.0.0.1:3847.
+      function go() {
+        location.replace("http://127.0.0.1:3847/");
+      }
+      setTimeout(go, 400);
+      setInterval(go, 2000);
+    </script>
+  </head>
+  <body>
+    <p>Arrancando Lumen…</p>
+  </body>
+</html>

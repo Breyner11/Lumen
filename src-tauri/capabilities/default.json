@@ -3,6 +3,9 @@
   "identifier": "default",
   "description": "Permisos base de Lumen en el escritorio",
   "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:3847/*", "http://localhost:3847/*"]
+  },
   "permissions": [
     "core:default",
     "shell:allow-open",

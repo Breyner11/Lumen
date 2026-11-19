@@ -24,6 +24,7 @@ fn spawn_next_sidecar(app: &AppHandle) -> Result<(), String> {
       "-File",
       script.to_string_lossy().as_ref(),
     ])
+    .env("LUMEN_RESOURCE_DIR", resource_dir.as_os_str())
     .stdout(Stdio::null())
     .stderr(Stdio::null())
     .spawn()

@@ -7,12 +7,13 @@
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:3847",
     "beforeBuildCommand": "npm run build && npm run lumen:standalone",
-    "frontendDist": "../out-desktop"
+    "frontendDist": "../desktop-shell"
   },
   "app": {
     "windows": [
       {
         "title": "Lumen",
+        "url": "http://127.0.0.1:3847",
         "width": 1180,
         "height": 760,
         "minWidth": 900,
@@ -20,7 +21,8 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": true,
-        "center": true
+        "center": true,
+        "label": "main"
       }
     ],
     "security": {
@@ -34,7 +36,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": [
+      "nsis",
+      "msi"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -45,15 +50,20 @@
       "nsis": {
         "installMode": "currentUser",
         "displayLanguageSelector": false,
-        "languages": ["Spanish"]
+        "languages": [
+          "Spanish"
+        ]
       },
       "wix": {
         "language": "es-ES"
       }
     },
-    "resources": ["../scripts/windows/start-lumen-sidecar.ps1"],
+    "resources": {
+      "../out-desktop/": "out-desktop/",
+      "../scripts/windows/start-lumen-sidecar.ps1": "scripts/windows/start-lumen-sidecar.ps1"
+    },
     "shortDescription": "Asistente local con Ollama",
-    "longDescription": "Lumen es una aplicación de escritorio Windows que responde con modelos locales en Ollama, documentos del usuario e internet opcional.",
+    "longDescription": "Lumen es una aplicaci\u00f3n de escritorio Windows que responde con modelos locales en Ollama, documentos del usuario e internet opcional.",
     "publisher": "Lumen",
     "category": "Education"
   },
