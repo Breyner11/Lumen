@@ -18,7 +18,8 @@ export function rewriteAnswerStyle(previous: string, style: AnswerStyle): string
 
 export function sanitizeBrokenMarkdown(text: string): string {
   return text
-    .replace(/\*\*\s+([^*\n]+?)\s*\*\*/g, (_all, inner: string) => {
+    // Solo corrige ** título ** en la misma línea (no cruces entre párrafos).
+    .replace(/\*\*[ \t]+([^*\n]+?)[ \t]+\*\*/g, (_all, inner: string) => {
       const body = inner.trim().replace(/:\s*$/, "");
       return `**${body}:**`;
     })
@@ -73,7 +74,7 @@ function expandInformative(text: string): string {
   return [
     "**Más detalle**",
     "",
-    ...unique.map((item) => `- ${item.replace(/^\*\*?/, "").replace(/\*\*$/, "").trim()}`),
+    ...unique.map((item) => `- ${item.replace(/\*\*/g, "").trim()}`),
     "",
     "**En resumen**",
     "",
@@ -86,7 +87,13 @@ function extractBullets(text: string): string[] {
     .split("\n")
     .map((line) => line.trim())
     .map((line) => line.replace(/^[-*•]\s+/, "").replace(/^\d+\.\s+/, ""))
-    .map((line) => line.replace(/^\*\*([^*]+)\*\*:\s*/, "$1: ").trim())
+    .map((line) =>
+      line
+        .replace(/^\*\*([^*]+?):\*\*\s*/, "$1: ")
+        .replace(/^\*\*([^*]+?)\*\*:?\s*/, "$1: ")
+        .replace(/\*\*/g, "")
+        .trim(),
+    )
     .filter((line) => line.length > 20)
     .filter((line) => !/^(Qué dicen las fuentes|En resumen|Versión corta|Más detalle)\b/i.test(line));
 }
