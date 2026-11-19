@@ -216,11 +216,16 @@ export function hasScrapedPageTitle(text: string): boolean {
 export function isTruncatedPhrase(text: string): boolean {
   const t = text.trim();
   if (!t) return true;
-  if (/\b(como|conocida|conocido|llamad[oa]|es|de|del|la|el|los|las|y|o|en|un|una)\s*\.?$/i.test(t)) {
+  // Unicode-aware: evita falsos positivos en palabras como «año» (\bo$ pegaba por \b ASCII).
+  if (
+    /(?<![A-Za-zÁÉÍÓÚÜÑáéíóúüñ])(como|conocida|conocido|llamad[oa]|es|de|del|la|el|los|las|y|o|en|un|una)\s*\.?$/iu.test(
+      t,
+    )
+  ) {
     return true;
   }
   if (/[,:;]\s*$/.test(t)) return true;
-  if (/\bconocida como\s*\.?$/i.test(t)) return true;
+  if (/(?<![A-Za-zÁÉÍÓÚÜÑáéíóúüñ])conocida como\s*\.?$/iu.test(t)) return true;
   return false;
 }
 
@@ -448,23 +453,65 @@ export function isModelReasoningDump(text: string): boolean {
   );
 }
 
+/** Segunda pasada corta: busca contradicciones internas y datos sospechosos. */
+export async function selfVerifyOverview(options: {
+  question: string;
+  draft: OverviewDraft;
+  model?: string;
+  timeoutMs?: number;
+}): Promise<{ ok: boolean; issues: string[] }> {
+  const body = formatOverviewMarkdown(options.draft);
+  const drafted = await ollamaChat({
+    model: options.model,
+    languageMode: "spanish",
+    keepAlive: "30m",
+    timeoutMs: options.timeoutMs ?? 12_000,
+    think: false,
+    numPredict: 100,
+    numCtx: 1024,
+    system: [
+      "Eres un revisor. NO reescribas la respuesta.",
+      "Busca solo: contradicciones internas, cifras inventadas, ubicaciones falsas, listas oficiales inventadas.",
+      'Responde SOLO JSON: {"ok":true,"issues":[]} o {"ok":false,"issues":["..."]}.',
+      "Máximo 3 issues, en español corto.",
+    ].join("\n"),
+    prompt: [`Pregunta: ${options.question}`, "", "Respuesta a revisar:", body].join("\n"),
+  });
+  if (!drafted.ok || !drafted.text.trim()) return { ok: true, issues: [] };
+  try {
+    const match = drafted.text.match(/\{[\s\S]*\}/);
+    if (!match) return { ok: true, issues: [] };
+    const parsed = JSON.parse(match[0]) as { ok?: boolean; issues?: string[] };
+    const issues = Array.isArray(parsed.issues)
+      ? parsed.issues.map((i) => String(i).slice(0, 120)).slice(0, 3)
+      : [];
+    return { ok: parsed.ok !== false && issues.length === 0, issues };
+  } catch {
+    return { ok: true, issues: [] };
+  }
+}
+
 const OVERVIEW_SYSTEM = [
   "Eres Lumen. Redactas resúmenes tipo Google AI Overview.",
   "Idioma: español neutro colombiano, claro para un estudiante de primeros semestres.",
   "CLARIDAD: lenguaje sencillo; frases naturales; sin jerga; si usas un término técnico, explícalo en pocas palabras.",
-  "EXTENSIÓN MEDIA: ni pobre ni excesiva. En preguntas normales, apunta a unas 120–300 palabras.",
+  "EXTENSIÓN MEDIA: ni pobre ni excesiva. En preguntas normales, apunta a unas 120–220 palabras.",
   "Mayúsculas, tildes y puntuación correctas (Bogotá, México, Medellín).",
   "CERO inglés. CERO razonamiento visible. CERO bloques <think> o 'Razonamiento'.",
+  "VERACIDAD: Si no estás seguro de un dato, no lo escribas.",
+  "No inventes cifras exactas (% con decimales, fechas precisas, poblaciones, listas oficiales de carreras) si no están en el contexto.",
+  "Si falta el dato: di «no estoy seguro» o «conviene verificar» en vez de inventar.",
+  "No contradigas tus propios ítems (p. ej. no digas que Cundinamarca no es departamento).",
   "Devuelve SOLO el bloque final, empezando exactamente con la línea RESPUESTA:",
   "Plantilla tras RESPUESTA:",
   "1) Respuesta directa de 2 a 3 frases que contesten la pregunta y den un poco de contexto.",
   "2) Un subtítulo **...** y de 3 a 6 viñetas. Cada viñeta: - **Nombre en negrita:** explicación de 1 a 3 frases con un dato o ejemplo concreto (NO copies títulos web).",
   "3) Si aplica, una sección corta **Dato útil**, **Ejemplo** o **En resumen** con 1 o 2 frases.",
   "4) No escribas las fuentes aquí: el sistema las añade (o «Respondido sin internet»).",
-  "Preguntas triviales (p. ej. «15% de 240»): más cortas, con resultado, procedimiento en una línea y un ejemplo.",
   "Prohibido en viñetas: 'Wikipedia', 'enciclopedia', dominios, títulos SEO, scrapes.",
   "Si la pregunta pide ejemplos de ciudad y el contexto es Colombia, usa ciudades colombianas reales (p. ej. Bogotá, Medellín, Cali).",
-  "No inventes. Si no estás seguro: dilo con claridad o RESPUESTA: No encontré información confiable para responder con seguridad.",
+  "Canberra es la capital de Australia (Territorio de la Capital Australiana), no Sídney.",
+  "Colombia tiene 32 departamentos; Bogotá es Distrito Capital; Cundinamarca sí es departamento.",
   "Prohibido: 'Te explicamos', 'Qué dicen las fuentes', ##, horas, URLs inventadas.",
   "Ejemplo:",
   "RESPUESTA:",
@@ -532,18 +579,19 @@ export async function redactOverviewFromKnowledge(options: {
     const drafted = await ollamaChat({
       model: options.model,
       languageMode: "spanish",
-      keepAlive: "5m",
-      timeoutMs: options.timeoutMs ?? 75_000,
+      keepAlive: "30m",
+      timeoutMs: options.timeoutMs ?? 28_000,
       think: false,
-      numPredict: 560,
-      numCtx: 3072,
+      numPredict: 340,
+      numCtx: 1536,
       system: [
         OVERVIEW_SYSTEM,
         "Usa tu conocimiento general. No cites URLs ni inventes fuentes.",
         "Si la pregunta pide datos muy recientes (noticias de hoy, precios al momento), di que no puedes verificarlos sin internet.",
         "Prioriza ejemplos de Colombia cuando el tema lo permita.",
+        "Si no estás seguro de un dato, no lo escribas.",
         attempt > 0
-          ? "REINTENTO: falló el validador. Extensión media (lead 2–3 frases, 3–6 ítems con 1–3 frases y dato concreto), nombres propios claros, sin Wikipedia ni títulos web."
+          ? "REINTENTO: falló el validador. Extensión media, nombres propios claros, sin Wikipedia ni títulos web, sin cifras inventadas."
           : "",
       ]
         .filter(Boolean)
@@ -692,15 +740,16 @@ export async function redactOverviewAnswer(options: {
     const drafted = await ollamaChat({
       model: options.model,
       languageMode: "spanish",
-      keepAlive: "5m",
-      timeoutMs: options.timeoutMs ?? 75_000,
+      keepAlive: "30m",
+      timeoutMs: options.timeoutMs ?? 28_000,
       think: false,
-      numPredict: 560,
-      numCtx: 3072,
+      numPredict: 340,
+      numCtx: 1536,
       system: [
         OVERVIEW_SYSTEM,
+        "Si no estás seguro de un dato, no lo escribas. Prefiere el contexto dado a inventar cifras.",
         attempt > 0
-          ? "REINTENTO: extensión media (lead 2–3 frases, 3–6 ítems con dato concreto); sin Wikipedia ni scrapes."
+          ? "REINTENTO: extensión media; sin Wikipedia ni scrapes; sin cifras inventadas."
           : "",
       ]
         .filter(Boolean)

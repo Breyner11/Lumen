@@ -37,7 +37,8 @@ function emitComposed(
     controller.enqueue(sse({ type: "reasoning", text: composed.thinking }));
   }
   const text = composed.answer || "No pude generar la respuesta.";
-  for (const part of chunk(text, 80)) {
+  // Chunks cortos: la primera palabra aparece antes en el UI.
+  for (const part of chunk(text, 24)) {
     controller.enqueue(sse({ type: "content", text: part }));
   }
   controller.enqueue(

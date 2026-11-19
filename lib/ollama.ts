@@ -200,7 +200,8 @@ export async function ollamaChat(options: {
         withOllamaLimits(
           {
             model,
-            stream: false,
+            // stream:true + acumular: Ollama empieza a generar antes; devolvemos el texto completo.
+            stream: true,
             // deepseek-r1: acorta el razonamiento para no agotar el timeout.
             think: options.think ?? false,
             messages,
@@ -221,12 +222,53 @@ export async function ollamaChat(options: {
       console.error("[taller/ollama]", error);
       return { ok: false, text: "", model, error };
     }
-    const json = (await response.json()) as {
-      message?: { content?: string; thinking?: string };
-      response?: string;
-    };
-    const raw = (json.message?.content || json.response || "").trim();
-    const thinkingField = json.message?.thinking?.trim();
+    // Acumula NDJSON de stream:true (message.content por chunk).
+    let raw = "";
+    let thinkingField = "";
+    const reader = response.body?.getReader();
+    if (!reader) {
+      return { ok: false, text: "", model, error: `Ollama sin cuerpo de respuesta (${model})` };
+    }
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const json = JSON.parse(trimmed) as {
+            message?: { content?: string; thinking?: string };
+            response?: string;
+            done?: boolean;
+          };
+          if (json.message?.content) raw += json.message.content;
+          if (json.response) raw += json.response;
+          if (json.message?.thinking) thinkingField += json.message.thinking;
+        } catch {
+          // línea incompleta o basura
+        }
+      }
+    }
+    if (buffer.trim()) {
+      try {
+        const json = JSON.parse(buffer.trim()) as {
+          message?: { content?: string; thinking?: string };
+          response?: string;
+        };
+        if (json.message?.content) raw += json.message.content;
+        if (json.response) raw += json.response;
+        if (json.message?.thinking) thinkingField += json.message.thinking;
+      } catch {
+        // ignore
+      }
+    }
+    raw = raw.trim();
+    thinkingField = thinkingField.trim();
     if (!raw && !thinkingField) {
       const error = `Ollama devolvió una respuesta vacía (${model} @ ${url})`;
       console.error("[taller/ollama]", error);

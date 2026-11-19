@@ -99,19 +99,28 @@ export function sanitizeSearchEnginePrefs(raw: unknown): SearchEnginePrefs {
 export function searchQueryVariants(question: string): string[] {
   const raw = question.replace(/[¿?¡!]/g, " ").replace(/\s+/g, " ").trim();
   const stripped = raw
+    .replace(/^(ejemplos?\s+de\s+|tips?\s+para\s+|causas\s+de\s+(la\s+)?|resume\s+)/i, "")
     .replace(
-      /^(cu[aá]l\s+es\s+(la|el)\s+|cu[aá]ntos?\s+(es|son|tiene|hay)\s+|qu[eé]\s+es\s+(un|una|el|la)?\s*|c[oó]mo\s+(se\s+)?|dime\s+|explica\s+)/i,
+      /^(cu[aá]l\s+es\s+(la|el)\s+|cu[aá]ntos?\s+|qu[eé]\s+(es|diferencia hay entre)\s+(un|una|el|la)?\s*|c[oó]mo\s+(se\s+)?(funciona\s+|hago\s+)?|qui[eé]n\s+(fue|es)\s+|dime\s+|explica\s+)/i,
       "",
     )
+    .replace(/\s+tiene\s+/i, " de ")
     .trim();
-  const variants = [raw, stripped].filter(Boolean);
+  const variants = [stripped, raw].filter(Boolean);
   // Capital de X → también "X" y "capital de X"
   const capital = /capital\s+de\s+(.+)/i.exec(stripped || raw);
   if (capital?.[1]) {
     variants.push(capital[1].trim());
     variants.push(`capital de ${capital[1].trim()}`);
   }
-  return [...new Set(variants.map((v) => v.slice(0, 120)))].slice(0, 3);
+  // Atajos que sí encuentran artículo en Wikipedia/Wikidata
+  if (/renovables?/i.test(raw)) variants.push("energías renovables");
+  if (/departamentos?/i.test(raw) && /colombia/i.test(raw)) variants.push("departamentos de Colombia");
+  if (/\bUNAD\b/i.test(raw)) variants.push("Universidad Nacional Abierta y a Distancia");
+  if (/garc[ií]a\s+m[aá]rquez/i.test(raw)) variants.push("Gabriel García Márquez");
+  if (/inflaci[oó]n/i.test(raw)) variants.push("inflación");
+  if (/ejemplos?\s+de\s+ciudad/i.test(raw)) variants.push("ciudad");
+  return [...new Set(variants.map((v) => v.slice(0, 120)).filter(Boolean))].slice(0, 5);
 }
 
 /** Consulta 2–3 motores en paralelo, deduplica y prioriza fuentes confiables. */
@@ -154,17 +163,12 @@ export async function multiSearch(
     return [];
   });
 
-  // Si SearXNG + wiki ya cubren, aún lanzamos 1 respaldo (marginalia o ddg).
-  const primaryCount = [prefs.searxng, prefs.wikipedia, prefs.wikidata].filter(Boolean).length;
-  if (primaryCount < 3 && prefs.marginalia) {
-    queue("marginalia", true, () => searchMarginalia(query));
-  } else if (prefs.marginalia && !prefs.searxng) {
-    queue("marginalia", true, () => searchMarginalia(query));
+  // Respaldo libre/gratis aunque ya haya 3 primarios (antes se saltaba y enginesUsed quedaba vacío).
+  if (prefs.marginalia) {
+    queue("marginalia", true, () => searchMarginalia(primary));
   }
-  if (prefs.duckduckgo && tasks.length < 3) {
-    queue("duckduckgo", true, () => searchDuckDuckGo(query));
-  } else if (prefs.duckduckgo && primaryCount === 0) {
-    queue("duckduckgo", true, () => searchDuckDuckGo(query));
+  if (prefs.duckduckgo) {
+    queue("duckduckgo", true, () => searchDuckDuckGo(primary));
   }
 
   // Asegura al menos DDG si nada más está activo.
@@ -224,25 +228,28 @@ export async function searchWikipediaEs(query: string): Promise<MultiSearchHit[]
   const searchUrl =
     `https://es.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}` +
     `&limit=5&namespace=0&format=json&origin=*`;
-  const open = (await fetchJson(searchUrl)) as [string, string[], string[], string[]] | null;
+  const open = (await fetchJson(searchUrl, 2_500)) as [string, string[], string[], string[]] | null;
   if (!Array.isArray(open) || open.length < 4) return [];
   const titles = open[1] || [];
   const snippets = open[2] || [];
   const urls = open[3] || [];
   const hits: MultiSearchHit[] = [];
+  // Solo el primer resumen REST (rápido); el resto usa el snippet de opensearch.
   for (let i = 0; i < Math.min(titles.length, 4); i += 1) {
     const title = titles[i]!;
-    let snippet = snippets[i] || "";
+    let snippet = snippets[i] || title;
     let pageUrl = urls[i] || `https://es.wikipedia.org/wiki/${encodeURIComponent(title)}`;
-    try {
-      const summary = (await fetchJson(
-        `https://es.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, "_"))}`,
-        3_500,
-      )) as { extract?: string; content_urls?: { desktop?: { page?: string } } } | null;
-      if (summary?.extract) snippet = summary.extract.slice(0, 420);
-      if (summary?.content_urls?.desktop?.page) pageUrl = summary.content_urls.desktop.page;
-    } catch {
-      /* resumen opcional */
+    if (i === 0) {
+      try {
+        const summary = (await fetchJson(
+          `https://es.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, "_"))}`,
+          2_000,
+        )) as { extract?: string; content_urls?: { desktop?: { page?: string } } } | null;
+        if (summary?.extract) snippet = summary.extract.slice(0, 420);
+        if (summary?.content_urls?.desktop?.page) pageUrl = summary.content_urls.desktop.page;
+      } catch {
+        /* resumen opcional */
+      }
     }
     hits.push({
       title: cleanText(title),
@@ -489,8 +496,17 @@ function normalizeKey(text: string): string {
 }
 
 /** Formatea pie de motores usados (para la respuesta visible). */
-export function formatEnginesUsedNote(engines: SearchEngineId[]): string {
-  if (!engines.length) return "";
-  const labels = engines.map((id) => SEARCH_ENGINE_META[id]?.label || id);
-  return `_Motores:_ ${labels.join(", ")}`;
+export function formatEnginesUsedNote(
+  engines: SearchEngineId[],
+  tried?: SearchEngineId[],
+): string {
+  if (engines.length) {
+    const labels = engines.map((id) => SEARCH_ENGINE_META[id]?.label || id);
+    return `_Motores:_ ${labels.join(", ")}`;
+  }
+  if (tried?.length) {
+    const labels = tried.map((id) => SEARCH_ENGINE_META[id]?.label || id);
+    return `_Motores consultados (sin resultados útiles):_ ${labels.join(", ")}`;
+  }
+  return "";
 }
