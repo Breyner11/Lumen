@@ -8,10 +8,18 @@ export type OverviewItem = {
   imageUrl?: string;
 };
 
+export type OverviewClosing = {
+  /** Título: Dato útil | Ejemplo | En resumen */
+  title: string;
+  text: string;
+};
+
 export type OverviewDraft = {
   lead: string;
   sectionTitle?: string;
   items: OverviewItem[];
+  /** Sección corta opcional al final (antes de fuentes). */
+  closing?: OverviewClosing;
 };
 
 export type ContextSnippet = {
@@ -105,6 +113,9 @@ export function formatOverviewMarkdown(
       parts.push(`- **${item.title}:** ${item.text}`);
     }
   }
+  if (draft.closing?.title?.trim() && draft.closing.text?.trim()) {
+    parts.push("", `**${draft.closing.title.trim()}**`, "", draft.closing.text.trim());
+  }
   return parts.join("\n").trim();
 }
 
@@ -179,12 +190,251 @@ export function looksLikeCleanOverview(text: string): boolean {
   }
   if (/^[a-záéíóúüñ]{2,}\./m.test(clean)) return false; // "peciales."
   if (/Te explicamos|guía definitiva|Top \d+ de/i.test(clean)) return false;
+  if (hasScrapedPageTitle(clean)) return false;
   const hasList = /^- \*\*[^*]+:\*\*/m.test(clean) || ROWS_RE.test(clean);
   if (!hasList) return false;
   const lead = clean.split(/\n\n|\n(?=\*\*)/)[0] || "";
   if (lead.length < 24) return false;
   if (/:\s*$/.test(lead) && lead.length < 80) return false; // título SEO truncado
+  if (isTruncatedPhrase(lead)) return false;
   return true;
+}
+
+/** Títulos de página / scrapes que no deben aparecer como ítems. */
+export function hasScrapedPageTitle(text: string): boolean {
+  return (
+    /\s-\s*Wikipedia/i.test(text) ||
+    /\benciclopedia\b/i.test(text) ||
+    /\bhttps?:\/\//i.test(text) ||
+    /\bwww\./i.test(text) ||
+    /\.(com|org|edu|gov|net)\b/i.test(text) ||
+    /\|\s*Spanish/i.test(text) ||
+    /\bAprendizaje\s*web\b/i.test(text)
+  );
+}
+
+export function isTruncatedPhrase(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (/\b(como|conocida|conocido|llamad[oa]|es|de|del|la|el|los|las|y|o|en|un|una)\s*\.?$/i.test(t)) {
+    return true;
+  }
+  if (/[,:;]\s*$/.test(t)) return true;
+  if (/\bconocida como\s*\.?$/i.test(t)) return true;
+  return false;
+}
+
+export type OverviewValidation = { ok: true } | { ok: false; reasons: string[] };
+
+/** Validador final: rechaza scrapes, frases cortadas y subtítulos incoherentes. */
+export function validateOverviewDraft(question: string, draft: OverviewDraft): OverviewValidation {
+  const reasons: string[] = [];
+  if (!draft.lead || draft.lead.length < 24) reasons.push("lead_corto");
+  if (isTruncatedPhrase(draft.lead)) reasons.push("lead_cortado");
+  if (hasScrapedPageTitle(draft.lead)) reasons.push("lead_scrape");
+  if (draft.items.length < 2) reasons.push("pocos_items");
+
+  for (const [index, item] of draft.items.entries()) {
+    const blob = `${item.title} ${item.text}`;
+    if (hasScrapedPageTitle(blob)) reasons.push(`item_scrape_${index}`);
+    if (isTruncatedPhrase(item.text)) reasons.push(`item_cortado_${index}`);
+    if (/^(conurbaci[oó]n|municipality|ciudad\s*-)/i.test(item.title.trim())) {
+      reasons.push(`item_basura_${index}`);
+    }
+    if (item.title.length > 48 && /\b(wikipedia|enciclopedia|guía|te explicamos)\b/i.test(item.title)) {
+      reasons.push(`item_titulo_pagina_${index}`);
+    }
+    if (item.text.length < 12) reasons.push(`item_vacio_${index}`);
+  }
+
+  if (draft.sectionTitle) {
+    const section = draft.sectionTitle.toLowerCase();
+    const itemBlob = draft.items.map((i) => `${i.title} ${i.text}`).join(" ").toLowerCase();
+    if (/colombia/.test(section) && !/colombia|bogot|medell|cali|barranquilla|cartagena|caquet/.test(itemBlob)) {
+      // Subtítulo habla de Colombia pero los ítems no.
+      if (/m[eé]xico|valle de m[eé]xico|naucalpan|tokio|tokyo|madrid|buenos aires/.test(itemBlob)) {
+        reasons.push("subtitulo_desalineado");
+      }
+    }
+    if (/ejemplos?\s+de\s+ciudad/.test(section) || /ejemplos?\s+de\s+ciudad/.test(question.toLowerCase())) {
+      const cityLike = draft.items.filter((item) =>
+        /^[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+(?:\s+[A-ZÁÉÍÓÚÜÑa-záéíóúüñ]+)?$/.test(item.title.trim()),
+      );
+      if (cityLike.length < 2) reasons.push("ejemplos_no_son_ciudades");
+    }
+  }
+
+  // La lead debe responder la pregunta (heurística mínima).
+  const q = question.toLowerCase();
+  if (/ejemplos?\s+de\s+ciudad|ejemplos?\s+de\s+ciudades/.test(q)) {
+    if (!/ciudad|bogot|medell|cali|capital|ejemplo/i.test(draft.lead)) {
+      reasons.push("lead_no_responde");
+    }
+    const badItems = draft.items.filter((item) =>
+      /wikipedia|conurbaci|enciclopedia|valle de m[eé]xico/i.test(`${item.title} ${item.text}`),
+    );
+    if (badItems.length) reasons.push("ejemplos_ciudad_basura");
+  }
+
+  // Claridad (estudiante de primeros semestres, extensión media).
+  const clarity = scoreOverviewClarity(draft, question);
+  if (!clarity.clear) {
+    for (const reason of clarity.reasons) reasons.push(reason);
+  }
+
+  return reasons.length ? { ok: false, reasons } : { ok: true };
+}
+
+export type ClarityScore = { clear: boolean; reasons: string[]; note: string };
+
+const CLOSING_TITLE_RE = /^(dato útil|ejemplo|en resumen)$/i;
+
+/** Preguntas triviales (cálculo corto): permiten respuesta más breve. */
+export function isTrivialOverviewQuestion(question: string): boolean {
+  const q = question.trim();
+  return (
+    /^\s*\d+\s*%\s*de\s*\d+/i.test(q) ||
+    /cu[aá]nto\s+es\s+\d+\s*%\s*de\s+\d+/i.test(q) ||
+    /^\s*\d+\s*[\+\-\*\/x×÷]\s*\d+\s*\??\s*$/i.test(q) ||
+    /cu[aá]nto\s+es\s+\d+\s*[\+\-\*\/x×÷]\s*\d+/i.test(q)
+  );
+}
+
+/**
+ * Claridad + extensión media:
+ * lead 2–3 frases; ítems 1–3 frases con dato/ejemplo; opcional cierre; ~120–300 palabras.
+ */
+export function scoreOverviewClarity(draft: OverviewDraft, question = ""): ClarityScore {
+  const reasons: string[] = [];
+  const trivial = isTrivialOverviewQuestion(question);
+  const leadSentences = countSentences(draft.lead);
+
+  if (!trivial) {
+    if (leadSentences < 2) reasons.push("lead_corta");
+    if (leadSentences > 3) reasons.push("lead_larga");
+    if (draft.lead.length > 520) reasons.push("lead_extensa");
+  } else {
+    if (leadSentences < 1) reasons.push("lead_corta");
+    if (leadSentences > 4) reasons.push("lead_larga");
+  }
+
+  for (const [index, item] of draft.items.entries()) {
+    const n = countSentences(item.text);
+    if (n < 1) reasons.push(`item_vacio_frase_${index}`);
+    if (!trivial && n > 3) reasons.push(`item_largo_${index}`);
+    if (trivial && n > 4) reasons.push(`item_largo_${index}`);
+    if (item.text.length > 420) reasons.push(`item_extenso_${index}`);
+    // Pedimos un dato o ejemplo concreto (heurística suave).
+    if (
+      !trivial &&
+      item.text.length < 40 &&
+      !/\d|por ejemplo|como|en |de |capital|ciudad|también/i.test(item.text)
+    ) {
+      reasons.push(`item_pobre_${index}`);
+    }
+  }
+
+  if (draft.closing) {
+    if (!CLOSING_TITLE_RE.test(draft.closing.title.trim())) {
+      reasons.push("cierre_titulo");
+    }
+    const cn = countSentences(draft.closing.text);
+    if (cn < 1 || cn > 2) reasons.push("cierre_largo");
+  }
+
+  const blob = draftWordBlob(draft);
+  const words = wordCount(blob);
+  if (!trivial) {
+    if (words < 90) reasons.push("texto_corto");
+    if (words > 360) reasons.push("texto_largo");
+  } else if (words > 180) {
+    reasons.push("texto_largo");
+  }
+
+  if (/<think>|<\/think>|\bRazonamiento\b/i.test(blob)) reasons.push("think_visible");
+  if (/\b(I should|Wait,|The user|in the query)\b/i.test(blob)) reasons.push("ingles_razonamiento");
+  if (hasHeavyJargon(blob) && !hasJargonExplained(blob)) reasons.push("jerga_sin_explicar");
+  if (hasBadCasing(blob)) reasons.push("mayusculas");
+  if (looksInventedConfident(blob)) reasons.push("posible_invencion");
+
+  const clear = reasons.length === 0;
+  return {
+    clear,
+    reasons,
+    note: clear
+      ? trivial
+        ? "Clara, breve y con procedimiento"
+        : "Clara, extensión media y bien estructurada"
+      : reasons
+          .slice(0, 3)
+          .map((r) => clarityReasonLabel(r))
+          .join("; "),
+  };
+}
+
+function draftWordBlob(draft: OverviewDraft): string {
+  return [
+    draft.lead,
+    ...draft.items.map((i) => `${i.title}: ${i.text}`),
+    draft.closing ? `${draft.closing.title}: ${draft.closing.text}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function wordCount(text: string): number {
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length > 0).length;
+}
+
+function countSentences(text: string): number {
+  return text
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 8).length;
+}
+
+function hasHeavyJargon(text: string): boolean {
+  return /\b(epistemolog|hermen[eé]ut|conurbaci[oó]n|metropolizaci[oó]n|paradigma|heur[ií]stic)\w*/i.test(
+    text,
+  );
+}
+
+function hasJargonExplained(text: string): boolean {
+  return /\b(es decir|o sea|quiere decir|significa|en pocas palabras|esto es)\b/i.test(text);
+}
+
+function hasBadCasing(text: string): boolean {
+  // Capitales de país/ciudad en minúscula típica de scrapes: "méxico", "bogotá" al inicio de ítem ya va en title.
+  if (/\b(méxico|mexico|bogotá|bogota|medellín|medellin|cali)\b/.test(text) && /\bm[eé]xico\b/.test(text)) {
+    // "valle de méxico" / país sin mayúscula cuando debería ser nombre propio en mitad de frase OK;
+    // marcamos solo si aparece como nombre propio mal al inicio tras puntuación.
+    if (/(?:^|[.!?]\s+)(méxico|bogotá|medellín|naucalpan)\b/.test(text)) return true;
+  }
+  if (/\bnaucalpan\b/.test(text) && !/\bNaucalpan\b/.test(text)) return true;
+  return false;
+}
+
+function looksInventedConfident(text: string): boolean {
+  return /\b(siempre|nunca|el \d{1,3}% exacto|científicamente demostrado que)\b/i.test(text) &&
+    /\b(según un rumor|whatsapp|cadena)\b/i.test(text);
+}
+
+function clarityReasonLabel(reason: string): string {
+  if (reason === "lead_corta") return "respuesta directa demasiado corta";
+  if (reason === "lead_larga" || reason === "lead_extensa") return "respuesta directa demasiado larga";
+  if (reason.startsWith("item_largo") || reason.startsWith("item_extenso")) return "ítem demasiado largo";
+  if (reason.startsWith("item_pobre")) return "ítem sin dato o ejemplo concreto";
+  if (reason === "texto_corto") return "texto demasiado corto (meta ~120–300 palabras)";
+  if (reason === "texto_largo") return "texto demasiado largo";
+  if (reason === "cierre_titulo" || reason === "cierre_largo") return "sección final mal formada";
+  if (reason === "think_visible") return "bloque de razonamiento visible";
+  if (reason === "jerga_sin_explicar") return "jerga sin explicar";
+  if (reason === "mayusculas") return "mayúsculas incorrectas";
+  if (reason === "posible_invencion") return "tono inventado/poco verificable";
+  return reason;
 }
 
 export function isModelReasoningDump(text: string): boolean {
@@ -195,23 +445,35 @@ export function isModelReasoningDump(text: string): boolean {
 
 const OVERVIEW_SYSTEM = [
   "Eres Lumen. Redactas resúmenes tipo Google AI Overview.",
-  "Idioma: español neutro colombiano. CERO inglés. CERO razonamiento visible.",
+  "Idioma: español neutro colombiano, claro para un estudiante de primeros semestres.",
+  "CLARIDAD: lenguaje sencillo; frases naturales; sin jerga; si usas un término técnico, explícalo en pocas palabras.",
+  "EXTENSIÓN MEDIA: ni pobre ni excesiva. En preguntas normales, apunta a unas 120–300 palabras.",
+  "Mayúsculas, tildes y puntuación correctas (Bogotá, México, Medellín).",
+  "CERO inglés. CERO razonamiento visible. CERO bloques <think> o 'Razonamiento'.",
   "Devuelve SOLO el bloque final, empezando exactamente con la línea RESPUESTA:",
   "Plantilla tras RESPUESTA:",
-  "1) 1 o 2 frases que contesten exactamente la pregunta.",
-  "2) Un subtítulo **...**",
-  "3) 3 a 6 viñetas con formato exacto: - **Nombre:** frase corta propia (no copies scrapes).",
-  "No inventes. Si no sabes: RESPUESTA: No encontré información confiable para responder con seguridad.",
-  "Prohibido: pensar en voz alta, pegar títulos SEO, 'Te explicamos', 'Qué dicen las fuentes', ##, horas, URLs inventadas.",
+  "1) Respuesta directa de 2 a 3 frases que contesten la pregunta y den un poco de contexto.",
+  "2) Un subtítulo **...** y de 3 a 6 viñetas. Cada viñeta: - **Nombre en negrita:** explicación de 1 a 3 frases con un dato o ejemplo concreto (NO copies títulos web).",
+  "3) Si aplica, una sección corta **Dato útil**, **Ejemplo** o **En resumen** con 1 o 2 frases.",
+  "4) No escribas las fuentes aquí: el sistema las añade (o «Respondido sin internet»).",
+  "Preguntas triviales (p. ej. «15% de 240»): más cortas, con resultado, procedimiento en una línea y un ejemplo.",
+  "Prohibido en viñetas: 'Wikipedia', 'enciclopedia', dominios, títulos SEO, scrapes.",
+  "Si la pregunta pide ejemplos de ciudad y el contexto es Colombia, usa ciudades colombianas reales (p. ej. Bogotá, Medellín, Cali).",
+  "No inventes. Si no estás seguro: dilo con claridad o RESPUESTA: No encontré información confiable para responder con seguridad.",
+  "Prohibido: 'Te explicamos', 'Qué dicen las fuentes', ##, horas, URLs inventadas.",
   "Ejemplo:",
   "RESPUESTA:",
-  "La fotosíntesis es el proceso por el que las plantas fabrican alimento usando luz, agua y CO2.",
+  "Una ciudad es un asentamiento grande con servicios, comercio y gobierno local. En Colombia, ejemplos claros son Bogotá, Medellín y Cali. Sirven para entender cómo se organiza la vida urbana en el país.",
   "",
-  "**Puntos clave**",
+  "**Ejemplos de ciudades en Colombia**",
   "",
-  "- **Luz:** aporta la energía para la reacción.",
-  "- **Clorofila:** pigmento que captura la luz.",
-  "- **Oxígeno:** se libera como subproducto.",
+  "- **Bogotá:** es la capital de Colombia y sede del gobierno nacional. Concentra muchas universidades y oficinas públicas.",
+  "- **Medellín:** es la ciudad principal de Antioquia. Destaca por su industria, el clima de valle y el sistema de transporte público.",
+  "- **Cali:** es la capital del Valle del Cauca. Es un centro cultural y económico del Pacífico colombiano.",
+  "",
+  "**En resumen**",
+  "",
+  "Bogotá, Medellín y Cali son tres ciudades grandes de Colombia con roles distintos en política, industria y cultura.",
 ].join("\n");
 
 export const OFFLINE_NOTE = "_Respondido sin internet_";
@@ -232,9 +494,20 @@ export async function redactOverviewFromKnowledge(options: {
   known?: { title: string; body: string };
   model?: string;
   timeoutMs?: number;
-}): Promise<{ ok: boolean; draft: OverviewDraft | null; raw?: string; error?: string; model?: string }> {
+  attempts?: number;
+}): Promise<{
+  ok: boolean;
+  draft: OverviewDraft | null;
+  raw?: string;
+  error?: string;
+  model?: string;
+  clarity?: ClarityScore;
+}> {
   if (options.known?.body) {
-    return { ok: true, draft: overviewFromKnown(options.known, []) };
+    const draft = overviewFromKnown(options.known, []);
+    const validation = validateOverviewDraft(options.question, draft);
+    const clarity = scoreOverviewClarity(draft, options.question);
+    if (validation.ok) return { ok: true, draft, clarity };
   }
 
   const skipModel =
@@ -245,46 +518,70 @@ export async function redactOverviewFromKnowledge(options: {
     return { ok: false, draft: null, error: "ollama no disponible" };
   }
 
-  const drafted = await ollamaChat({
-    model: options.model,
-    languageMode: "spanish",
-    keepAlive: "5m",
-    timeoutMs: options.timeoutMs ?? 75_000,
-    think: false,
-    numPredict: 320,
-    numCtx: 2048,
-    system: [
-      OVERVIEW_SYSTEM,
-      "Usa tu conocimiento general. No cites URLs ni inventes fuentes.",
-      "Si la pregunta pide datos muy recientes (noticias de hoy, precios al momento), di que no puedes verificarlos sin internet.",
-      "Prioriza ejemplos de Colombia cuando el tema lo permita.",
-    ].join("\n"),
-    prompt: [`Pregunta: ${options.question}`, "", "RESPUESTA:"].join("\n"),
-  });
+  const attempts = options.attempts ?? 2;
+  let lastRaw = "";
+  let lastModel = options.model;
+  let lastError = "formato inválido";
 
-  if (!drafted.ok || !drafted.text.trim()) {
-    return { ok: false, draft: null, error: drafted.error, model: drafted.model };
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const drafted = await ollamaChat({
+      model: options.model,
+      languageMode: "spanish",
+      keepAlive: "5m",
+      timeoutMs: options.timeoutMs ?? 75_000,
+      think: false,
+      numPredict: 560,
+      numCtx: 3072,
+      system: [
+        OVERVIEW_SYSTEM,
+        "Usa tu conocimiento general. No cites URLs ni inventes fuentes.",
+        "Si la pregunta pide datos muy recientes (noticias de hoy, precios al momento), di que no puedes verificarlos sin internet.",
+        "Prioriza ejemplos de Colombia cuando el tema lo permita.",
+        attempt > 0
+          ? "REINTENTO: falló el validador. Extensión media (lead 2–3 frases, 3–6 ítems con 1–3 frases y dato concreto), nombres propios claros, sin Wikipedia ni títulos web."
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      prompt: [`Pregunta: ${options.question}`, "", "RESPUESTA:"].join("\n"),
+    });
+
+    lastModel = drafted.model;
+    if (!drafted.ok || !drafted.text.trim()) {
+      lastError = drafted.error || "ollama vacío";
+      continue;
+    }
+    lastRaw = drafted.text;
+
+    let parsed =
+      parseOverviewFromModel(drafted.text, []) || salvageOverviewFromLooseText(drafted.text);
+    if (parsed && parsed.lead && parsed.items.length === 1) {
+      parsed = {
+        ...parsed,
+        sectionTitle: parsed.sectionTitle || "Puntos clave",
+        items: [
+          parsed.items[0]!,
+          {
+            title: "Detalle",
+            text: parsed.lead.length > 120 ? `${parsed.lead.slice(0, 117)}…` : parsed.lead,
+          },
+        ],
+      };
+    }
+    if (!parsed || parsed.items.length < 2 || !parsed.lead) {
+      lastError = "formato inválido";
+      continue;
+    }
+    const validation = validateOverviewDraft(options.question, parsed);
+    const clarity = scoreOverviewClarity(parsed, options.question);
+    if (!validation.ok) {
+      lastError = `validador: ${validation.reasons.join(",")}`;
+      continue;
+    }
+    return { ok: true, draft: parsed, raw: drafted.text, model: drafted.model, clarity };
   }
 
-  let parsed =
-    parseOverviewFromModel(drafted.text, []) || salvageOverviewFromLooseText(drafted.text);
-  if (parsed && parsed.lead && parsed.items.length === 1) {
-    parsed = {
-      ...parsed,
-      sectionTitle: parsed.sectionTitle || "Puntos clave",
-      items: [
-        parsed.items[0]!,
-        {
-          title: "Detalle",
-          text: parsed.lead.length > 120 ? `${parsed.lead.slice(0, 117)}…` : parsed.lead,
-        },
-      ],
-    };
-  }
-  if (!parsed || parsed.items.length < 2 || !parsed.lead) {
-    return { ok: false, draft: null, raw: drafted.text, error: "formato inválido", model: drafted.model };
-  }
-  return { ok: true, draft: parsed, raw: drafted.text, model: drafted.model };
+  return { ok: false, draft: null, raw: lastRaw || undefined, error: lastError, model: lastModel };
 }
 
 /** Recupera overview cuando el modelo se desvía un poco de la plantilla. */
@@ -328,8 +625,8 @@ function salvageOverviewFromLooseText(raw: string): OverviewDraft | null {
     return null;
   }
   const lead =
-    leadLine.replace(/\*\*/g, "").slice(0, 280) ||
-    `${items[0]!.title}: ${items[0]!.text}`.slice(0, 280);
+    leadLine.replace(/\*\*/g, "").slice(0, 520) ||
+    `${items[0]!.title}: ${items[0]!.text}`.slice(0, 520);
   return {
     lead,
     sectionTitle: "Puntos clave",
@@ -344,12 +641,23 @@ export async function redactOverviewAnswer(options: {
   images?: CitationImage[];
   timeoutMs?: number;
   model?: string;
-}): Promise<{ ok: boolean; draft: OverviewDraft | null; raw?: string; error?: string }> {
-  const fallback = buildOverviewFallback(options);
+  attempts?: number;
+}): Promise<{
+  ok: boolean;
+  draft: OverviewDraft | null;
+  raw?: string;
+  error?: string;
+  clarity?: ClarityScore;
+}> {
+  // Solo usa fallback de scrapes si pasa el validador (casi nunca con títulos Wikipedia).
+  const rawFallback = buildOverviewFallback(options);
+  const fallback =
+    rawFallback && validateOverviewDraft(options.question, rawFallback).ok ? rawFallback : null;
+
   const contextNotes = [
     options.known ? `Nota confiable:\n${options.known.title}\n${options.known.body}` : "",
     options.snippets.length
-      ? `Fragmentos limpios (solo contexto; no copies literal):\n${options.snippets
+      ? `Fragmentos limpios (solo contexto; no copies literal ni títulos web):\n${options.snippets
           .map((s, i) => `[${i + 1}] ${s.title}: ${s.text}`)
           .join("\n")}`
       : "",
@@ -358,46 +666,81 @@ export async function redactOverviewAnswer(options: {
     .join("\n\n")
     .slice(0, 2200);
 
-  if (!contextNotes && !fallback) {
-    return { ok: false, draft: null, error: "sin contexto" };
-  }
-
-  // Si Ollama no responde rápido, usa el fallback overview (mismo formato).
   const skipModel =
     process.env.TALLER_SKIP_OLLAMA === "1" ||
     process.env.LUMEN_SKIP_OLLAMA === "1" ||
     !(await ollamaAvailable(AbortSignal.timeout(1_500)));
   if (skipModel) {
-    return { ok: false, draft: fallback, error: "ollama no disponible; fallback overview" };
+    return {
+      ok: false,
+      draft: fallback,
+      error: "ollama no disponible; fallback overview",
+      clarity: fallback ? scoreOverviewClarity(fallback, options.question) : undefined,
+    };
   }
 
-  const drafted = await ollamaChat({
-    model: options.model,
-    languageMode: "spanish",
-    keepAlive: "5m",
-    timeoutMs: options.timeoutMs ?? 45_000,
-    think: false,
-    numPredict: 280,
-    numCtx: 2048,
-    system: OVERVIEW_SYSTEM,
-    prompt: [
-      `Pregunta: ${options.question}`,
-      "",
-      contextNotes || "(sin notas útiles)",
-      "",
-      "RESPUESTA:",
-    ].join("\n"),
-  });
+  const attempts = options.attempts ?? 2;
+  let lastRaw = "";
+  let lastError = "formato inválido";
 
-  if (!drafted.ok || !drafted.text.trim()) {
-    return { ok: false, draft: fallback, error: drafted.error };
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const drafted = await ollamaChat({
+      model: options.model,
+      languageMode: "spanish",
+      keepAlive: "5m",
+      timeoutMs: options.timeoutMs ?? 75_000,
+      think: false,
+      numPredict: 560,
+      numCtx: 3072,
+      system: [
+        OVERVIEW_SYSTEM,
+        attempt > 0
+          ? "REINTENTO: extensión media (lead 2–3 frases, 3–6 ítems con dato concreto); sin Wikipedia ni scrapes."
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      prompt: [
+        `Pregunta: ${options.question}`,
+        "",
+        contextNotes || "(sin notas útiles; usa tu conocimiento claro)",
+        "",
+        "RESPUESTA:",
+      ].join("\n"),
+    });
+
+    if (!drafted.ok || !drafted.text.trim()) {
+      lastError = drafted.error || "ollama vacío";
+      continue;
+    }
+    lastRaw = drafted.text;
+    const parsed =
+      parseOverviewFromModel(drafted.text, options.images ?? []) ||
+      salvageOverviewFromLooseText(drafted.text);
+    if (!parsed) {
+      lastError = "formato inválido";
+      continue;
+    }
+    const validation = validateOverviewDraft(options.question, parsed);
+    if (!validation.ok) {
+      lastError = `validador: ${validation.reasons.join(",")}`;
+      continue;
+    }
+    return {
+      ok: true,
+      draft: parsed,
+      raw: drafted.text,
+      clarity: scoreOverviewClarity(parsed, options.question),
+    };
   }
 
-  const parsed = parseOverviewFromModel(drafted.text, options.images ?? []);
-  if (!parsed || !looksLikeCleanOverview(formatOverviewMarkdown(parsed))) {
-    return { ok: false, draft: fallback, raw: drafted.text, error: "formato inválido" };
-  }
-  return { ok: true, draft: parsed, raw: drafted.text };
+  return {
+    ok: false,
+    draft: fallback,
+    raw: lastRaw || undefined,
+    error: lastError,
+    clarity: fallback ? scoreOverviewClarity(fallback, options.question) : undefined,
+  };
 }
 
 function parseOverviewFromModel(raw: string, images: CitationImage[]): OverviewDraft | null {
@@ -413,45 +756,81 @@ function parseOverviewFromModel(raw: string, images: CitationImage[]): OverviewD
   if (!looksLikeCleanOverview(text) && !hasBullets) return null;
 
   const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  const bullets = lines.filter((l) => /^[-*•]\s+/.test(l));
-  const sectionLines = lines.filter((l) => /^\*\*[^*]+\*\*$/.test(l));
-  const nonBullets = lines.filter((l) => !/^[-*•]\s+/.test(l) && !/^\*\*[^*]+\*\*$/.test(l));
-  const section = sectionLines[0]?.replace(/\*\*/g, "") || undefined;
-  // Si el modelo puso el lead como **Respuesta: …**, úsalo como lead.
-  const sectionAsLead = section
-    ?.replace(/^(respuesta|resumen|ubicaci[oó]n)\s*:\s*/i, "")
-    .trim();
-  const lead =
-    nonBullets.slice(0, 2).join(" ") ||
-    nonBullets[0] ||
-    (sectionAsLead && sectionAsLead.length >= 20 ? sectionAsLead : "") ||
-    "";
-
+  const leadParts: string[] = [];
+  let section: string | undefined;
+  let closingTitle: string | undefined;
+  const closingParts: string[] = [];
   const items: OverviewItem[] = [];
-  for (const bullet of bullets.slice(0, 6)) {
-    const match =
-      /^[-*•]\s+\*\*([^*]+?):\*\*\s*(.+)$/.exec(bullet) ||
-      /^[-*•]\s+\*\*([^*]+)\*\*:?\s*(.+)$/.exec(bullet) ||
-      /^[-*•]\s+\*\*([^*]+)\*\*\s*[—:-]\s*(.+)$/.exec(bullet) ||
-      /^[-*•]\s+([^:]{2,40}):\s*(.+)$/.exec(bullet);
-    if (!match) continue;
-    const title = match[1].trim().replace(/:$/, "");
-    const body = match[2].trim();
-    if (!body || isMarketingBlurb(body) || isMarketingBlurb(title)) continue;
-    items.push({
-      title,
-      text: body,
-      imageUrl: matchImage(title, images),
-    });
+  let phase: "lead" | "items" | "closing" = "lead";
+
+  for (const line of lines) {
+    if (/^\*\*[^*]+\*\*$/.test(line)) {
+      const title = line.replace(/\*\*/g, "").trim();
+      if (CLOSING_TITLE_RE.test(title)) {
+        closingTitle = title;
+        phase = "closing";
+        continue;
+      }
+      if (!section && !CLOSING_TITLE_RE.test(title)) {
+        section = title.replace(/^(respuesta|resumen|ubicaci[oó]n)\s*:\s*/i, "").trim();
+        phase = "items";
+        continue;
+      }
+      // Segundo subtítulo no-cierre: tratar como cierre genérico si ya hay ítems.
+      if (items.length && !closingTitle) {
+        closingTitle = title;
+        phase = "closing";
+      }
+      continue;
+    }
+    if (/^[-*•]\s+/.test(line)) {
+      phase = "items";
+      const match =
+        /^[-*•]\s+\*\*([^*]+?):\*\*\s*(.+)$/.exec(line) ||
+        /^[-*•]\s+\*\*([^*]+)\*\*:?\s*(.+)$/.exec(line) ||
+        /^[-*•]\s+\*\*([^*]+)\*\*\s*[—:-]\s*(.+)$/.exec(line) ||
+        /^[-*•]\s+([^:]{2,40}):\s*(.+)$/.exec(line);
+      if (!match || items.length >= 6) continue;
+      const title = match[1].trim().replace(/:$/, "");
+      const body = match[2].trim();
+      if (!body || isMarketingBlurb(body) || isMarketingBlurb(title)) continue;
+      items.push({
+        title,
+        text: body,
+        imageUrl: matchImage(title, images),
+      });
+      continue;
+    }
+    if (phase === "closing") {
+      closingParts.push(line);
+      continue;
+    }
+    if (phase === "lead") {
+      leadParts.push(line);
+    }
   }
+
+  // Lead: hasta 3 frases (pueden venir en 1–3 líneas).
+  const leadJoined = leadParts.join(" ").trim();
+  const sectionAsLead =
+    section && section.length >= 20 && leadJoined.length < 20 ? section : "";
+  const lead = leadJoined || sectionAsLead || "";
 
   const cleanLead = lead.replace(/^#+\s*/, "").trim();
   if (!cleanLead || items.length < 2) return null;
   if (isMarketingBlurb(cleanLead) || isModelReasoningDump(cleanLead)) return null;
+
+  const closingText = closingParts.join(" ").trim();
+  const closing =
+    closingTitle && closingText
+      ? { title: closingTitle, text: closingText }
+      : undefined;
+
   return {
     lead: cleanLead,
-    sectionTitle: section,
+    sectionTitle: section && section !== cleanLead ? section : section,
     items,
+    closing,
   };
 }
 
@@ -478,33 +857,68 @@ function extractModelFinalAnswer(raw: string): string {
     .trim();
 }
 
-function overviewFromKnown(
+export function overviewFromKnown(
   known: { title: string; body: string },
   images: CitationImage[],
 ): OverviewDraft {
   const lines = known.body.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  const bullets = lines.filter((l) => l.startsWith("- "));
-  const prose = lines.filter((l) => !l.startsWith("- ") && !l.startsWith("**"));
-  const lead = prose[0] || `${known.title}: definición breve a partir de referencias locales.`;
+  const leadParts: string[] = [];
   const items: OverviewItem[] = [];
-  for (const bullet of bullets) {
-    const body = bullet.replace(/^[-*]\s+/, "");
-    const named = /^\*\*([^*]+?):\*\*\s*(.+)$/.exec(body) || /^\*\*([^*]+)\*\*:?\s*(.+)$/.exec(body);
-    if (named) {
-      items.push({
-        title: named[1].trim().replace(/:$/, ""),
-        text: named[2].replace(/^["“]|["”]$/g, "").trim(),
-        imageUrl: matchImage(named[1], images),
-      });
-    } else if (body.length >= 20) {
-      items.push({
-        title: shortenTitle(body).slice(0, 40),
-        text: body,
-        imageUrl: matchImage(body, images),
-      });
+  let sectionTitle: string | undefined;
+  let closing: OverviewClosing | undefined;
+  let phase: "lead" | "items" | "closing" = "lead";
+  let closingTitle: string | undefined;
+  const closingParts: string[] = [];
+
+  for (const line of lines) {
+    if (/^\*\*[^*]+\*\*$/.test(line)) {
+      const title = line.replace(/\*\*/g, "").trim();
+      if (CLOSING_TITLE_RE.test(title)) {
+        closingTitle = title;
+        phase = "closing";
+        continue;
+      }
+      if (!sectionTitle) sectionTitle = title;
+      phase = "items";
+      continue;
     }
-    if (items.length >= 6) break;
+    if (line.startsWith("- ")) {
+      phase = "items";
+      if (items.length >= 6) continue;
+      const body = line.replace(/^[-*]\s+/, "");
+      const named = /^\*\*([^*]+?):\*\*\s*(.+)$/.exec(body) || /^\*\*([^*]+)\*\*:?\s*(.+)$/.exec(body);
+      if (named) {
+        items.push({
+          title: named[1].trim().replace(/:$/, ""),
+          text: named[2].replace(/^["“]|["”]$/g, "").trim(),
+          imageUrl: matchImage(named[1], images),
+        });
+      } else if (body.length >= 20) {
+        items.push({
+          title: shortenTitle(body).slice(0, 40),
+          text: body,
+          imageUrl: matchImage(body, images),
+        });
+      }
+      continue;
+    }
+    if (phase === "closing") {
+      closingParts.push(line);
+      continue;
+    }
+    if (phase === "lead") {
+      leadParts.push(line);
+    }
   }
+
+  if (closingTitle && closingParts.length) {
+    closing = { title: closingTitle, text: closingParts.join(" ").trim() };
+  }
+
+  let lead =
+    leadParts.join(" ").replace(/\*\*/g, "").trim() ||
+    `${known.title}: definición breve a partir de referencias locales.`;
+
   // Si la ficha known es un párrafo, partimos en puntos clave.
   if (items.length < 2) {
     const sentences = lead
@@ -523,18 +937,17 @@ function overviewFromKnown(
         { title: "Uso", text: `Sirve para entender «${known.title}» con claridad.` },
       );
     }
+    // Conservar solo las primeras 3 frases como lead.
+    if (sentences.length >= 2) {
+      lead = sentences.slice(0, Math.min(3, sentences.length)).join(" ");
+    }
   }
-  const section = lines.find((l) => /^\*\*[^*]+\*\*$/.test(l))?.replace(/\*\*/g, "");
-  const sectionTitle =
-    section && !/sin[oó]nimos|ejemplos de uso/i.test(section)
-      ? section
-      : items.length
-        ? "Puntos clave"
-        : undefined;
+
   return {
-    lead: lead.replace(/\*\*/g, "").slice(0, 280),
-    sectionTitle,
+    lead: lead.slice(0, 520),
+    sectionTitle: sectionTitle || (items.length ? "Puntos clave" : undefined),
     items: items.slice(0, 6),
+    closing,
   };
 }
 

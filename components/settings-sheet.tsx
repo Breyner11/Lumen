@@ -7,6 +7,12 @@ import {
   type OllamaChatModelId,
   type OllamaChatModelOption,
 } from "@/lib/ollama-models";
+import {
+  DEFAULT_SEARCH_ENGINE_PREFS,
+  SEARCH_ENGINE_META,
+  type SearchEngineId,
+  type SearchEnginePrefs,
+} from "@/lib/search/engines";
 import { createDeadlineId, type UserMemory } from "@/lib/user-memory";
 import { SEED_UNAD_KB, type UnadKbArticle } from "@/lib/tools/unad";
 import { Button } from "@/components/ui/button";
@@ -24,6 +30,8 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   webSearch: boolean | "auto";
   onWebSearchChange: (value: boolean | "auto") => void;
+  searchEngines: SearchEnginePrefs;
+  onSearchEnginesChange: (value: SearchEnginePrefs) => void;
   ollamaModel: string;
   onOllamaModelChange: (value: string) => void;
   memory: UserMemory;
@@ -97,6 +105,75 @@ export function SettingsSheet(props: Props) {
                 </Button>
               ))}
             </div>
+          </section>
+
+          <section className="space-y-2" aria-labelledby="engines-heading">
+            <h3 id="engines-heading" className="text-sm font-semibold">
+              Motores de búsqueda (gratis / libres)
+            </h3>
+            <p className="text-xs leading-5 text-muted-foreground">
+              Solo se usan en Automático o Siempre. Prioridad: SearXNG (AGPL, local) → Wikipedia /
+              Wikidata → Marginalia → DuckDuckGo (gratis, no es código libre). Sin APIs de pago.
+            </p>
+            {(
+              [
+                "searxng",
+                "wikipedia",
+                "wikidata",
+                "marginalia",
+                "duckduckgo",
+              ] as SearchEngineId[]
+            ).map((id) => {
+              const meta = SEARCH_ENGINE_META[id];
+              const on = props.searchEngines[id];
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={`flex w-full items-start justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition ${
+                    on ? "border-primary/40 bg-primary/10" : "border-border hover:bg-muted/50"
+                  }`}
+                  aria-pressed={on}
+                  onClick={() =>
+                    props.onSearchEnginesChange({
+                      ...props.searchEngines,
+                      [id]: !on,
+                    })
+                  }
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{meta.label}</span>
+                    <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">
+                      {meta.blurb}
+                      {meta.floss ? " · libre" : " · gratis"}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-[11px] text-muted-foreground">{on ? "on" : "off"}</span>
+                </button>
+              );
+            })}
+            {props.searchEngines.searxng ? (
+              <label className="block space-y-1 pt-1">
+                <span className="text-xs font-medium">URL de SearXNG</span>
+                <input
+                  value={props.searchEngines.searxngUrl || DEFAULT_SEARCH_ENGINE_PREFS.searxngUrl}
+                  onChange={(event) =>
+                    props.onSearchEnginesChange({
+                      ...props.searchEngines,
+                      searxngUrl: event.target.value,
+                    })
+                  }
+                  className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm"
+                  placeholder="http://127.0.0.1:8080"
+                />
+                <span className="block text-[11px] text-muted-foreground">
+                  Guía Windows: <code className="rounded bg-muted px-1">docs/searxng-windows.md</code>
+                </span>
+              </label>
+            ) : null}
+            <p className="text-[11px] leading-4 text-muted-foreground">
+              Licencias: ver <code className="rounded bg-muted px-1">LICENSES-TERCEROS.md</code>.
+            </p>
           </section>
 
           <section className="space-y-2" aria-labelledby="model-heading">

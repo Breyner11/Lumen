@@ -22,6 +22,11 @@ import { LumenLogo } from "@/components/lumen-logo";
 import { FirstRunSetup } from "@/components/first-run-setup";
 import { SettingsSheet } from "@/components/settings-sheet";
 import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
+import {
+  DEFAULT_SEARCH_ENGINE_PREFS,
+  sanitizeSearchEnginePrefs,
+  type SearchEnginePrefs,
+} from "@/lib/search/engines";
 import { ACTIVITY_MAP, MODEL_LABEL } from "@/lib/activities";
 import { buildBackup, downloadJson, parseBackup } from "@/lib/backup";
 import { chatToMarkdown, downloadDocx, downloadText, openPrintablePdf } from "@/lib/export-doc";
@@ -114,6 +119,7 @@ export function TallerApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showFirstRun, setShowFirstRun] = useState(true);
   const [webSearch, setWebSearch] = useState<boolean | "auto">(false);
+  const [searchEngines, setSearchEngines] = useState<SearchEnginePrefs>(DEFAULT_SEARCH_ENGINE_PREFS);
   const [ollamaModel, setOllamaModel] = useState(DEFAULT_QUALITY_MODEL);
   const [userMemory, setUserMemory] = useState<UserMemory>(EMPTY_USER_MEMORY);
   const [tasks, setTasks] = useState<AssistantTask[]>([]);
@@ -135,6 +141,7 @@ export function TallerApp() {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const activeSessionIdRef = useRef(activeSessionId);
@@ -179,6 +186,7 @@ export function TallerApp() {
       setLessons(stored.lessons);
       setDocuments(stored.documents.length ? stored.documents : seedDocuments());
       setWebSearch(stored.webSearch ?? false);
+      setSearchEngines(sanitizeSearchEnginePrefs(stored.searchEngines));
       setOllamaModel(stored.ollamaModel || DEFAULT_QUALITY_MODEL);
       setUserMemory(stored.memory || EMPTY_USER_MEMORY);
       setTasks(stored.tasks || []);
@@ -240,6 +248,7 @@ export function TallerApp() {
         lessons,
         documents,
         webSearch,
+        searchEngines,
         ollamaModel,
         memory: userMemory,
         tasks,
@@ -256,6 +265,7 @@ export function TallerApp() {
     lessons,
     documents,
     webSearch,
+    searchEngines,
     ollamaModel,
     userMemory,
     tasks,
@@ -773,6 +783,7 @@ export function TallerApp() {
           lessons,
           documents,
           webSearch,
+          searchEngines,
           ollamaModel,
         }),
         signal: controller.signal,
@@ -1002,7 +1013,7 @@ export function TallerApp() {
           </Button>
           <Button variant="ghost" className="w-full justify-start" onClick={() => setKnowledgeOpen(true)}>
             <Library />
-            Conocimiento local
+            Mis documentos
             {documents.length > 0 && <Badge className="ml-auto" variant="secondary">{documents.length}</Badge>}
           </Button>
           <Button variant="ghost" className="w-full justify-start" onClick={() => setSettingsOpen(true)}>
@@ -1014,9 +1025,14 @@ export function TallerApp() {
             className="w-full justify-start"
             disabled={streaming || webSearch === false}
             onClick={() => void learnFromInternetNow()}
+            title={
+              webSearch === false
+                ? "Activa Internet arriba para actualizar datos opcionales"
+                : "Busca temas útiles y los guarda solo en este PC"
+            }
           >
             <Wifi />
-            {webSearch === false ? "Internet apagado" : "Aprender de Internet ahora"}
+            {webSearch === false ? "Internet apagado" : "Actualizar datos (opcional)"}
           </Button>
         </div>
       </aside>
@@ -1052,7 +1068,7 @@ export function TallerApp() {
           <Button variant="ghost" size="icon" className="xl:hidden" onClick={() => setRecipeOpen(true)} aria-label="Ver la receta">
             <PanelRight />
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => setKnowledgeOpen(true)} aria-label="Conocimiento local">
+          <Button variant="ghost" size="icon" onClick={() => setKnowledgeOpen(true)} aria-label="Mis documentos">
             <Library />
           </Button>
           <Button variant="ghost" size="icon" onClick={() => setSettingsOpen(true)} aria-label="Ajustes">
@@ -1065,6 +1081,32 @@ export function TallerApp() {
         </header>
 
         <div className="mx-3 mt-2 flex items-center gap-2 overflow-x-auto rounded-[1.1rem] px-3 py-2 glass-panel md:mx-0 md:mr-3">
+          <Button
+            variant={effort === "low" && !thinking ? "secondary" : "outline"}
+            size="sm"
+            aria-pressed={effort === "low" && !thinking}
+            onClick={() => {
+              setEffort("low");
+              setThinking(false);
+              setModel("flash");
+            }}
+            title="Respuestas más cortas y rápidas"
+          >
+            Rápido
+          </Button>
+          <Button
+            variant={effort !== "low" || thinking ? "secondary" : "outline"}
+            size="sm"
+            aria-pressed={effort !== "low" || thinking}
+            onClick={() => {
+              setEffort("high");
+              setThinking(true);
+              setModel("pro");
+            }}
+            title="Respuestas más completas"
+          >
+            Detallado
+          </Button>
           <Button
             variant={webSearch === false ? "secondary" : "outline"}
             size="sm"
@@ -1085,11 +1127,8 @@ export function TallerApp() {
             }
             title="Ciclar: apagado → automático → siempre"
           >
-            {webSearch === true ? "Internet: sí" : webSearch === "auto" ? "Internet: auto" : "Activar internet"}
+            {webSearch === true ? "Internet: sí" : webSearch === "auto" ? "Internet: auto" : "Internet"}
           </Button>
-          <Badge variant="secondary" className="hidden max-w-[10rem] truncate sm:inline-flex" title={ollamaModel}>
-            {ollamaModel}
-          </Badge>
           <Button variant="ghost" size="sm" className="ml-auto" onClick={newChat} disabled={streaming}>
             <Plus />
             Nuevo chat
@@ -1163,7 +1202,7 @@ export function TallerApp() {
         </div>
 
         <form
-          className={`mx-3 mb-3 rounded-[1.3rem] px-3 py-3 glass-panel md:mx-0 md:mr-3 md:mb-3 ${
+          className={`mx-auto mb-3 w-full max-w-2xl px-3 md:px-6 ${
             thread.length === 0 ? "hidden md:hidden" : ""
           }`}
           onSubmit={(event) => {
@@ -1172,7 +1211,7 @@ export function TallerApp() {
           }}
         >
           {pendingFiles.length > 0 ? (
-            <div className="mx-auto mb-2 flex max-w-2xl flex-wrap gap-2">
+            <div className="mb-2 flex flex-wrap gap-2">
               {pendingFiles.map((file, index) => (
                 <span
                   key={`${file.name}-${index}`}
@@ -1191,25 +1230,7 @@ export function TallerApp() {
               ))}
             </div>
           ) : null}
-          <div className="mx-auto flex max-w-2xl items-end gap-2">
-            <label className="sr-only" htmlFor="mensaje">
-              Mensaje para {current.label}
-            </label>
-            <Textarea
-              id="mensaje"
-              value={draft}
-              placeholder={current.placeholder}
-              disabled={streaming}
-              rows={2}
-              className="max-h-40 min-h-16 border-0 bg-transparent shadow-none focus-visible:ring-0"
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void send();
-                }
-              }}
-            />
+          <div className="composer-capsule">
             <input
               ref={attachInputRef}
               type="file"
@@ -1224,40 +1245,66 @@ export function TallerApp() {
               }}
             />
             <input ref={audioInputRef} type="file" accept="audio/*,.webm,.wav,.mp3,.m4a,.ogg" className="hidden" />
-            <Button
+            <button
               type="button"
-              variant="outline"
-              size="icon-lg"
+              className="composer-icon-btn"
               aria-label="Adjuntar documento, imagen o audio"
               disabled={streaming}
               onClick={() => attachInputRef.current?.click()}
             >
-              <Plus />
-            </Button>
-            <Button
+              <Plus className="size-5" />
+            </button>
+            <label className="sr-only" htmlFor="mensaje">
+              Mensaje para {current.label}
+            </label>
+            <textarea
+              ref={composerRef}
+              id="mensaje"
+              value={draft}
+              placeholder="Pregunta lo que necesites…"
+              disabled={streaming}
+              rows={1}
+              className="composer-input"
+              onChange={(event) => {
+                setDraft(event.target.value);
+                const el = event.target;
+                el.style.height = "auto";
+                el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+            />
+            <button
               type="button"
-              variant="outline"
-              size="icon-lg"
+              className="composer-icon-btn"
               aria-label="Grabar audio"
               disabled={streaming}
               onClick={() => void recordAndTranscribe()}
             >
-              <Mic />
-            </Button>
+              <Mic className="size-5" />
+            </button>
             {streaming ? (
-              <Button type="button" variant="outline" size="icon-lg" className="brand-mark" aria-label="Detener" onClick={() => abortRef.current?.abort()}>
-                <Square />
-              </Button>
+              <button
+                type="button"
+                className="composer-send"
+                aria-label="Detener"
+                onClick={() => abortRef.current?.abort()}
+              >
+                <Square className="size-4" />
+              </button>
             ) : (
-              <Button
+              <button
                 type="submit"
-                size="icon-lg"
-                className="brand-mark"
+                className="composer-send"
                 aria-label="Enviar"
                 disabled={!draft.trim() && pendingFiles.length === 0}
               >
-                <ArrowUp />
-              </Button>
+                <ArrowUp className="size-5" />
+              </button>
             )}
           </div>
         </form>
@@ -1321,11 +1368,11 @@ export function TallerApp() {
       <Sheet open={knowledgeOpen} onOpenChange={setKnowledgeOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md">
           <SheetHeader>
-            <SheetTitle className="font-heading italic">Conocimiento local</SheetTitle>
+            <SheetTitle className="font-heading italic">Mis documentos</SheetTitle>
           </SheetHeader>
           <div className="space-y-4 px-1 pb-6">
             <p className="text-sm leading-6 text-muted-foreground">
-              Pega apuntes o sube PDF, DOCX o TXT. {APP_NAME} los indexa en este dispositivo (TF-IDF / embeddings locales) y los usa sin internet.
+              Pega apuntes o sube PDF, DOCX o TXT. Quedan solo en este PC y {APP_NAME} los usa para responder sin internet.
             </p>
             <label className="flex w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-border px-3 py-3 text-sm hover:bg-muted/50">
               Elegir carpeta o archivos (PDF, DOCX, TXT)
@@ -1452,6 +1499,8 @@ export function TallerApp() {
         onOpenChange={setSettingsOpen}
         webSearch={webSearch}
         onWebSearchChange={setWebSearch}
+        searchEngines={searchEngines}
+        onSearchEnginesChange={setSearchEngines}
         ollamaModel={ollamaModel}
         onOllamaModelChange={setOllamaModel}
         memory={userMemory}
@@ -1466,7 +1515,7 @@ export function TallerApp() {
               documents,
               memory: userMemory,
               tasks,
-              settings: { webSearch, ollamaModel, skin, theme },
+              settings: { webSearch, searchEngines, ollamaModel, skin, theme },
             }),
           );
           setLearnNote("Copia de seguridad descargada (solo local).");
@@ -1591,17 +1640,25 @@ function WelcomeState({
           onSubmit();
         }}
       >
-        <div className="hover-lift flex items-center gap-2 rounded-[1.6rem] border border-border bg-card px-3 py-2 shadow-sm">
+        <div className="composer-capsule">
+          <span className="composer-icon-btn pointer-events-none opacity-70" aria-hidden>
+            <Plus className="size-5" />
+          </span>
           <input
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
             placeholder="Pregunta lo que necesites…"
-            className="min-w-0 flex-1 bg-transparent px-2 py-3 text-base outline-none placeholder:text-muted-foreground"
+            className="composer-input"
             aria-label="Buscar o preguntar"
           />
-          <Button type="submit" size="icon" className="size-11 shrink-0 rounded-full" disabled={!draft.trim()} aria-label="Enviar">
-            <ArrowUp />
-          </Button>
+          <button
+            type="submit"
+            className="composer-send"
+            disabled={!draft.trim()}
+            aria-label="Enviar"
+          >
+            <ArrowUp className="size-5" />
+          </button>
         </div>
       </form>
 
@@ -1736,8 +1793,10 @@ function MessageBubble({
         )}
         {message.reasoning && (
           <details className="mb-3 rounded-xl bg-muted/70 px-3 py-2 text-sm">
-            <summary className="cursor-pointer text-muted-foreground">Razonamiento</summary>
-            <p className="mt-2 whitespace-pre-wrap">{message.reasoning}</p>
+            <summary className="cursor-pointer text-muted-foreground">
+              Ver pasos (opcional)
+            </summary>
+            <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{message.reasoning}</p>
           </details>
         )}
         {mine ? (
@@ -1972,6 +2031,7 @@ function readStorage(): {
   lessons: Lesson[];
   documents: RagDocument[];
   webSearch?: boolean | "auto";
+  searchEngines?: SearchEnginePrefs;
   ollamaModel?: string;
   memory?: UserMemory;
   tasks?: AssistantTask[];
@@ -1994,6 +2054,7 @@ function readStorage(): {
       lessons?: unknown;
       documents?: unknown;
       webSearch?: boolean | "auto";
+      searchEngines?: unknown;
       ollamaModel?: string;
       memory?: unknown;
       tasks?: unknown;
@@ -2020,6 +2081,7 @@ function readStorage(): {
         parsed.webSearch === true || parsed.webSearch === false || parsed.webSearch === "auto"
           ? parsed.webSearch
           : false,
+      searchEngines: sanitizeSearchEnginePrefs(parsed.searchEngines),
       ollamaModel: typeof parsed.ollamaModel === "string" ? parsed.ollamaModel : undefined,
       memory: sanitizeUserMemory(parsed.memory),
       tasks: sanitizeTasks(parsed.tasks),

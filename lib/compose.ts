@@ -88,6 +88,7 @@ export async function composeConversation(options: {
   documents?: RagDocument[];
   now?: Date;
   webSearch?: boolean | "auto";
+  searchEngines?: import("@/lib/search/engines").SearchEnginePrefs;
   ollamaModel?: string;
 }): Promise<ComposeResult> {
   const latest = lastUserText(options.messages);
@@ -287,6 +288,7 @@ export async function composeConversation(options: {
       lessons,
       messages: options.messages,
       webSearch: options.webSearch ?? false,
+      searchEngines: options.searchEngines,
       ollamaModel: options.ollamaModel,
     });
     if (tool.usedWeb) void engineLearnFromQuery(latest);

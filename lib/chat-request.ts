@@ -4,6 +4,10 @@ import { sanitizeLessons, type Lesson } from "@/lib/lessons";
 import { isOllamaChatModelId, type OllamaChatModelId } from "@/lib/ollama-models";
 import { sanitizeDocuments } from "@/lib/rag/pipeline";
 import type { RagDocument } from "@/lib/rag/types";
+import {
+  sanitizeSearchEnginePrefs,
+  type SearchEnginePrefs,
+} from "@/lib/search/engines";
 import type { ActivityId, ChatTurn, Effort, ModelId } from "@/lib/types";
 import { ACTIVITY_IDS, EFFORTS, MODEL_IDS } from "@/lib/types";
 
@@ -21,6 +25,8 @@ export type ChatRequest = {
   documents: RagDocument[];
   /** Interruptor «Buscar en internet». Por defecto false (offline-first). */
   webSearch?: boolean | "auto";
+  /** Preferencias de motores gratuitos/libres (SearXNG, Wiki, etc.). */
+  searchEngines?: SearchEnginePrefs;
   /** Modelo Ollama local (p. ej. qwen2.5:7b). */
   ollamaModel?: OllamaChatModelId | string;
 };
@@ -76,6 +82,8 @@ export function parseChatRequest(body: unknown): ChatRequest | { error: string }
     }
   }
 
+  const searchEngines = sanitizeSearchEnginePrefs(record.searchEngines);
+
   return {
     activity: record.activity as ActivityId,
     model: record.model as ModelId,
@@ -85,6 +93,7 @@ export function parseChatRequest(body: unknown): ChatRequest | { error: string }
     lessons: sanitizeLessons(record.lessons).slice(0, 80),
     documents: sanitizeDocuments(record.documents).slice(0, 40),
     webSearch,
+    searchEngines,
     ollamaModel,
   };
 }

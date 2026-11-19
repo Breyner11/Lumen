@@ -1,8 +1,16 @@
 import { sourcesFromHits, type CitationImage, type CitationSource } from "@/lib/rag/citations";
-import { engineSearch } from "@/lib/rag/engine-client";
 import { runRagPipeline } from "@/lib/rag/pipeline";
 import type { RagDocument, RagHit } from "@/lib/rag/types";
 import type { Lesson } from "@/lib/lessons";
+import {
+  DEFAULT_SEARCH_ENGINE_PREFS,
+  formatEnginesUsedNote,
+  multiSearch,
+  sanitizeSearchEnginePrefs,
+  type MultiSearchHit,
+  type SearchEngineId,
+  type SearchEnginePrefs,
+} from "@/lib/search/engines";
 import { detectAnswerStyle } from "@/lib/style";
 import { rewriteAnswerStyle } from "@/lib/style-rewrite";
 import {
@@ -13,6 +21,10 @@ import {
   prepareContextSnippets,
   redactOverviewAnswer,
   redactOverviewFromKnowledge,
+  overviewFromKnown,
+  scoreOverviewClarity,
+  validateOverviewDraft,
+  type ClarityScore,
 } from "@/lib/tools/overview";
 import type { ChatTurn } from "@/lib/types";
 
@@ -27,6 +39,9 @@ type ToolResult = {
   sources: CitationSource[];
   usedWeb?: boolean;
   offline?: boolean;
+  clarity?: ClarityScore;
+  /** Motores gratuitos/libres usados en esta respuesta. */
+  enginesUsed?: SearchEngineId[];
 };
 
 /** Preguntas que suelen necesitar dato fresco de internet. */
@@ -36,7 +51,70 @@ export function looksLikeFreshWebQuery(question: string): boolean {
   );
 }
 
+/** Datos exactos / numéricos donde conviene contrastar con Wiki/Wikidata/SearXNG. */
+export function looksLikeExactOrNumericQuery(question: string): boolean {
+  return (
+    /\b(cu[aá]ntos?|cu[aá]l\s+es\s+la\s+capital|poblaci[oó]n|fecha|en\s+qu[eé]\s+a[nñ]o|porcentaje|%\s*de)\b/i.test(
+      question,
+    ) ||
+    /\b\d+\s*%\s*de\s*\d+/i.test(question) ||
+    /capital\s+de\s+\w+/i.test(question)
+  );
+}
+
 const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
+  {
+    match: /capital\s+de\s+australia|australia.*capital/i,
+    title: "Capital de Australia",
+    body: [
+      "La capital de Australia es Canberra. No es Sídney ni Melbourne, aunque esas ciudades son más grandes y conocidas. Canberra se eligió como compromiso entre Sídney y Melbourne a inicios del siglo XX.",
+      "",
+      "**Datos clave**",
+      "",
+      "- **Canberra:** capital federal de Australia y sede del Parlamento.",
+      "- **Sídney:** ciudad más poblada; a menudo se confunde con la capital, pero no lo es.",
+      "- **Melbourne:** otra gran ciudad; tampoco es la capital.",
+      "",
+      "**En resumen**",
+      "",
+      "Si te preguntan la capital de Australia, la respuesta correcta es Canberra.",
+    ].join("\n"),
+  },
+  {
+    match: /cu[aá]ntos?\s+departamentos\s+tiene\s+colombia|departamentos\s+de\s+colombia/i,
+    title: "Departamentos de Colombia",
+    body: [
+      "Colombia tiene 32 departamentos y un distrito capital: Bogotá. Los departamentos son la división principal del territorio junto con el Distrito Capital.",
+      "",
+      "**Organización territorial**",
+      "",
+      "- **32 departamentos:** unidades administrativas con gobernador y asamblea.",
+      "- **Bogotá, D.C.:** distrito capital; no es un departamento, aunque funciona como entidad especial.",
+      "- **Ejemplos:** Antioquia, Valle del Cauca, Cundinamarca, Caquetá y Atlántico.",
+      "",
+      "**En resumen**",
+      "",
+      "La cifra que debes recordar es 32 departamentos, más el Distrito Capital de Bogotá.",
+    ].join("\n"),
+  },
+  {
+    match: /sin[oó]nimos?\s+de\s+feliz/,
+    title: "Sinónimos de feliz",
+    body: [
+      "Algunos sinónimos de feliz son contento, alegre, dichoso y satisfecho. Se usan para hablar de bienestar o de un buen momento. La palabra exacta depende del tono: más cotidiano, más literario o más formal.",
+      "",
+      "**Sinónimos de feliz**",
+      "",
+      "- **Contento:** expresa satisfacción con lo que ocurre. Por ejemplo: «Estoy contento con la nota del examen.»",
+      "- **Alegre:** señala un ánimo positivo y ligero. Por ejemplo: «Llegó alegre a la reunión familiar.»",
+      "- **Dichoso:** es un sinónimo más literario o enfático. Por ejemplo: «Se sintió dichoso al reencontrarse con su familia.»",
+      "- **Satisfecho:** destaca que se cumplió una expectativa. Por ejemplo: «Quedó satisfecho con el resultado del proyecto.»",
+      "",
+      "**En resumen**",
+      "",
+      "Contento, alegre, dichoso y satisfecho sirven como alternativas claras a feliz según el contexto.",
+    ].join("\n"),
+  },
   {
     match: /metodolog[ií]a\s+de\s+(?:la\s+)?investigaci[oó]n|metodolog[ií]a\s+investigativa/,
     title: "Metodología de investigación",
@@ -141,6 +219,10 @@ export async function researchBrief(
     webSearch?: WebSearchMode;
     /** Modelo Ollama de chat (p. ej. qwen2.5:7b). */
     ollamaModel?: string;
+    /** Preferencias de motores gratuitos/libres (SearXNG, Wiki, etc.). */
+    searchEngines?: Partial<SearchEnginePrefs> | SearchEnginePrefs;
+    /** Si false, no usa multi-motor aunque web esté en auto/siempre (para benches). */
+    useMultiEngines?: boolean;
   },
 ): Promise<ToolResult> {
   const question = input.trim().replace(/\s+/g, " ");
@@ -157,8 +239,14 @@ export async function researchBrief(
   const lower = question.toLowerCase();
   const known = KNOWN.find((item) => item.match.test(lower));
   const webMode: WebSearchMode = options?.webSearch ?? false;
+  const searchPrefs = sanitizeSearchEnginePrefs(
+    options?.searchEngines ?? DEFAULT_SEARCH_ENGINE_PREFS,
+  );
+  const useMulti = options?.useMultiEngines !== false;
   const wantWeb =
-    webMode === true || (webMode === "auto" && looksLikeFreshWebQuery(question));
+    webMode === true ||
+    (webMode === "auto" &&
+      (looksLikeFreshWebQuery(question) || looksLikeExactOrNumericQuery(question)));
   const model = options?.ollamaModel;
 
   // 1) Documentos / lecciones locales (sin web).
@@ -189,187 +277,206 @@ export async function researchBrief(
   let images = rag.images.slice(0, 3);
   let usedWeb = false;
 
-  // 2) Si hay contexto local útil o ficha known → overview con ese contexto.
-  if (known || snippets.length >= 1) {
-    const localSources = cleanCitationSources(
-      sourcesFromHits(
-        hits.map((hit) => ({
-          title: hit.chunk.title,
-          source: hit.chunk.source,
-        })),
-      ).filter((s) => !s.url?.startsWith("http") || Boolean(options?.documents?.length)),
-    );
-    const redacted = await redactOverviewAnswer({
-      question,
-      snippets,
-      known,
-      images: [],
-      timeoutMs: 60_000,
-      model,
-    });
-    const overview =
-      redacted.draft ||
-      buildOverviewFallback({ question, snippets, known, images: [] }) ||
-      null;
-    if (overview && (overview.items.length >= 2 || Boolean(known))) {
-      let answer = formatOverviewMarkdown(overview);
-      const style = detectAnswerStyle(options?.messages ?? []);
-      if (style === "corto" || style === "natural") answer = rewriteAnswerStyle(answer, style);
-      if (!wantWeb) {
+  const localSources = cleanCitationSources(
+    sourcesFromHits(
+      hits.map((hit) => ({
+        title: hit.chunk.title,
+        source: hit.chunk.source,
+      })),
+    ).filter((s) => !s.url?.startsWith("http") || Boolean(options?.documents?.length)),
+  );
+
+  // 2) Siempre pasar por el redactor del modelo (contexto local si hay; si no, conocimiento).
+  // Nunca devolver scrapes crudos: el validador rechaza Wikipedia/títulos web.
+  if (!wantWeb) {
+    let overview = null as ReturnType<typeof buildOverviewFallback>;
+    let thinking: string | undefined;
+    let clarity: ClarityScore | undefined;
+
+    // Ficha local confiable: usar primero (extensión media + claridad) sin depender de Ollama.
+    if (known) {
+      const fromKnown = overviewFromKnown(known, []);
+      if (validateOverviewDraft(question, fromKnown).ok) {
+        overview = fromKnown;
+        clarity = scoreOverviewClarity(fromKnown, question);
+      }
+    }
+
+    if (!overview && snippets.length >= 1) {
+      const withContext = await redactOverviewAnswer({
+        question,
+        snippets,
+        known,
+        images: [],
+        timeoutMs: 90_000,
+        model,
+        attempts: 3,
+      });
+      if (withContext.draft && validateOverviewDraft(question, withContext.draft).ok) {
+        overview = withContext.draft;
+        clarity = withContext.clarity || scoreOverviewClarity(withContext.draft, question);
+      } else {
+        thinking = withContext.error;
+      }
+    }
+
+    if (!overview) {
+      const fromModel = await redactOverviewFromKnowledge({
+        question,
+        known,
+        model,
+        timeoutMs: 90_000,
+        attempts: 3,
+      });
+      if (fromModel.draft && validateOverviewDraft(question, fromModel.draft).ok) {
+        overview = fromModel.draft;
+        clarity = fromModel.clarity || scoreOverviewClarity(fromModel.draft, question);
+        thinking = fromModel.ok ? undefined : fromModel.error;
+      } else {
+        thinking = fromModel.error || thinking;
+      }
+    }
+
+    if (overview) {
+      clarity = clarity || scoreOverviewClarity(overview, question);
+      // En Auto, si la claridad falla, escalamos a motores gratuitos (no nos quedamos con una respuesta dudosa).
+      const escalateAuto = webMode === "auto" && clarity && !clarity.clear;
+      if (!escalateAuto) {
+        let answer = formatOverviewMarkdown(overview);
+        const style = detectAnswerStyle(options?.messages ?? []);
+        if (style === "corto" || style === "natural") answer = rewriteAnswerStyle(answer, style);
         answer = appendOfflineFooter(answer, {
           confidence: known
             ? "Ficha local confiable."
-            : redacted.ok
-              ? "Basado en documentos locales o conocimiento del modelo."
-              : "Redacción de respaldo a partir de contexto local.",
+            : `Redactado local (${model || "Ollama"}). Sin fuentes web inventadas.`,
         });
+        return {
+          applicable: true,
+          answer,
+          images: [],
+          sources: localSources,
+          notes: "",
+          thinking,
+          usedWeb: false,
+          offline: true,
+          clarity,
+        };
       }
-      return {
-        applicable: true,
-        answer,
-        images: [],
-        sources: localSources,
-        notes: "",
-        thinking: redacted.ok ? undefined : redacted.error,
-        usedWeb: false,
-        offline: !wantWeb,
-      };
-    }
-  }
-
-  // 3) Offline-first: conocimiento propio del modelo (sin inventar fuentes).
-  if (!wantWeb) {
-    const fromModel = await redactOverviewFromKnowledge({
-      question,
-      known,
-      model,
-      timeoutMs: 90_000,
-    });
-    if (fromModel.draft && fromModel.draft.items.length >= 2) {
-      let answer = formatOverviewMarkdown(fromModel.draft);
-      const style = detectAnswerStyle(options?.messages ?? []);
-      if (style === "corto" || style === "natural") answer = rewriteAnswerStyle(answer, style);
-      answer = appendOfflineFooter(answer, {
-        confidence: fromModel.ok
-          ? `Conocimiento del modelo local (${fromModel.model || model || "Ollama"}). Sin fuentes web.`
-          : "Respuesta local sin fuentes web.",
-      });
-      return {
-        applicable: true,
-        answer,
-        images: [],
-        sources: [],
-        notes: "",
-        thinking: fromModel.ok ? undefined : fromModel.error,
-        usedWeb: false,
-        offline: true,
-      };
     }
 
-    // Auto: si el modelo no pudo y el modo es auto, activar web abajo.
     if (webMode !== "auto") {
       return {
         applicable: false,
         answer: appendOfflineFooter(
           [
-            "No pude responder con seguridad solo con el modelo local.",
+            "No pude responder con claridad solo con el modelo local.",
             "",
-            "Prueba a activar «Buscar en internet», subir un PDF/DOCX/TXT en Conocimiento, o cambiar el modelo en Ajustes.",
+            "Prueba a activar «Buscar en internet», subir un documento en Mis documentos, o cambiar el modelo en Ajustes.",
           ].join("\n"),
-          { confidence: "Sin respuesta confiable offline." },
+          { confidence: "Sin respuesta clara offline." },
         ),
         notes: "",
         images: [],
         sources: [],
-        thinking: fromModel.error,
+        thinking,
         usedWeb: false,
         offline: true,
+        clarity: { clear: false, reasons: ["sin_respuesta"], note: "No hubo respuesta clara" },
       };
     }
   }
 
-  // 4) Web opcional (interruptor o auto tras fallo / dato fresco).
-  const useWeb = wantWeb || webMode === "auto";
+  // 4) Web opcional (Siempre, o Auto tras fallo / dato fresco-numérico).
+  // Solo motores gratuitos/libres: SearXNG → Wikipedia/Wikidata → Marginalia → DDG.
+  const useWeb = wantWeb || webMode === "auto" || webMode === true;
   if (useWeb) {
-    const liveRag = await runRagPipeline({
-      query: question,
-      activity: "investigar",
-      documents: options?.documents,
-      lessons: options?.lessons,
-      includeLiveSources: true,
-    });
-    hits = liveRag.hits;
-    snippets = prepareContextSnippets(hits, question);
-    if (snippets.filter((snippet) => snippet.url).length < 2) {
-      const web = await engineSearch(question, 6);
-      if (web.length) {
-        const webHits: RagHit[] = web.map((item, index) => ({
-          score: 0.55 - index * 0.04,
-          chunk: {
-            id: `live-web-${index}`,
-            documentId: `live-web-${index}`,
-            title: item.title,
-            source: `${item.source || "web"} · ${item.url}`,
-            text: item.snippet || item.title,
-            index,
-          },
-        }));
-        hits = [...webHits, ...hits];
-        snippets = prepareContextSnippets(hits, question);
-        sources = cleanCitationSources([
-          ...web.map((item) => ({ title: item.title, url: item.url })),
-          ...sources,
-        ]);
-        usedWeb = true;
-      }
-    } else {
+    let enginesUsed: SearchEngineId[] = [];
+    const webHits: MultiSearchHit[] = [];
+
+    if (useMulti) {
+      const multi = await multiSearch(question, searchPrefs, { timeoutMs: 4_500, limit: 8 });
+      enginesUsed = multi.enginesUsed;
+      webHits.push(...multi.hits);
+    }
+
+    if (webHits.length) {
+      const asRag: RagHit[] = webHits.map((item, index) => ({
+        score: item.score,
+        chunk: {
+          id: `live-web-${item.engine}-${index}`,
+          documentId: `live-web-${item.engine}-${index}`,
+          title: item.title,
+          source: `${item.engine} · ${item.url}`,
+          text: item.snippet || item.title,
+          index,
+        },
+      }));
+      hits = [...asRag, ...hits];
+      snippets = prepareContextSnippets(hits, question);
+      sources = cleanCitationSources([
+        ...webHits.map((item) => ({ title: item.title, url: item.url })),
+        ...sources,
+      ]);
       usedWeb = true;
     }
-    images = liveRag.images.slice(0, 3);
-    const rawSources =
-      liveRag.sources.length > 0
-        ? liveRag.sources
-        : sourcesFromHits(
-            hits.map((hit) => ({
-              title: hit.chunk.title,
-              source: hit.chunk.source,
-            })),
-          );
-    sources = cleanCitationSources([...sources, ...rawSources]);
 
     const redacted = await redactOverviewAnswer({
       question,
       snippets,
       known,
-      images,
-      timeoutMs: 60_000,
+      images: [],
+      timeoutMs: 90_000,
       model,
+      attempts: 3,
     });
-    const overview =
-      redacted.draft ||
-      buildOverviewFallback({ question, snippets, known, images }) ||
-      null;
+    let overview =
+      redacted.draft && validateOverviewDraft(question, redacted.draft).ok ? redacted.draft : null;
+    let clarity = redacted.clarity;
+    // Si el web ensució el overview, regenera solo con conocimiento.
+    if (!overview) {
+      const fromModel = await redactOverviewFromKnowledge({
+        question,
+        known,
+        model,
+        timeoutMs: 90_000,
+        attempts: 3,
+      });
+      if (fromModel.draft && validateOverviewDraft(question, fromModel.draft).ok) {
+        overview = fromModel.draft;
+        clarity = fromModel.clarity;
+      }
+    }
     if (!overview) {
       return {
         applicable: false,
         answer: [
-          "No encontré información confiable para responder con seguridad.",
+          "No encontré información clara y confiable para responder.",
           "",
-          "Prueba a reformular o carga un documento en Conocimiento.",
+          "Prueba a reformular o carga un documento en Mis documentos.",
         ].join("\n"),
         notes: "",
         images: [],
         sources,
         usedWeb,
         offline: !usedWeb,
+        enginesUsed,
+        clarity: { clear: false, reasons: ["sin_respuesta"], note: "No hubo respuesta clara" },
       };
     }
-    let answer = formatOverviewMarkdown(overview, {
-      rows: overview.items.some((item) => Boolean(item.imageUrl)),
-    });
+    let answer = formatOverviewMarkdown(overview, { rows: false });
     const style = detectAnswerStyle(options?.messages ?? []);
     if (style === "corto" || style === "natural") answer = rewriteAnswerStyle(answer, style);
-    if (!usedWeb) {
+    const enginesNote = formatEnginesUsedNote(enginesUsed);
+    if (usedWeb) {
+      const sourceLines = sources
+        .filter((s) => s.url?.startsWith("http"))
+        .slice(0, 6)
+        .map((s) => `- [${s.title}](${s.url})`);
+      if (sourceLines.length) {
+        answer = `${answer}\n\n**Fuentes**\n${sourceLines.join("\n")}`;
+      }
+      if (enginesNote) answer = `${answer}\n\n${enginesNote}`;
+    } else {
       answer = appendOfflineFooter(answer, {
         confidence: "Sin resultados web útiles; respuesta local.",
       });
@@ -377,12 +484,14 @@ export async function researchBrief(
     return {
       applicable: true,
       answer,
-      images,
+      images: [],
       sources: usedWeb ? sources : [],
       notes: "",
       thinking: redacted.ok ? undefined : redacted.error,
       usedWeb,
       offline: !usedWeb,
+      enginesUsed,
+      clarity: clarity || scoreOverviewClarity(overview, question),
     };
   }
 

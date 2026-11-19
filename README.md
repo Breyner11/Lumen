@@ -1,5 +1,7 @@
 # Lumen
 
+Licencias de terceros (Ollama, Qwen, SearXNG, Wikipedia, etc.): ver [`LICENSES-TERCEROS.md`](./LICENSES-TERCEROS.md). SearXNG local: [`docs/searxng-windows.md`](./docs/searxng-windows.md).
+
 Asistente todoterreno **local** en un solo chat (**Preguntar**): calcula, investiga, estudia, programa, escribe, organiza, traduce, resume, modo **Asistente** (tareas y PC con confirmación), lee fotos, transcribe audio y trabaja con tus PDF/DOCX/TXT. Por defecto **no usa internet**: responde con Ollama + documentos locales y marca *Respondido sin internet*. La búsqueda web es un interruptor opcional en Ajustes.
 
 El nombre visible vive en `lib/brand.ts` (`APP_NAME`). UI en español, modo claro/oscuro e interfaces opcionales.
