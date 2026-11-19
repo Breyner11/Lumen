@@ -4,15 +4,18 @@ Guía sencilla para instalar la app de escritorio **Lumen** (Taller) en un PC co
 
 ## 1. Descargar el instalador (`.exe`)
 
-1. Entra al repositorio del proyecto en Cursor/Origin o GitHub (el que use tu equipo).
-2. Abre la pestaña **Actions** (o **CI** / ejecuciones).
-3. Busca el flujo **Windows installer (Tauri)** (`windows-tauri.yml`).
-4. Abre la ejecución **más reciente en verde** (éxito).
-5. Baja del final de la página, en **Artifacts**, el paquete **`lumen-windows-installers`**.
-6. Descomprime el ZIP. Usa el archivo **`.exe`** (instalador NSIS).  
-   (También puede haber un `.msi`; cualquiera de los dos sirve.)
+El instalador se genera con el flujo de GitHub Actions **Windows installer (Tauri)** (archivo `.github/workflows/windows-tauri.yml`). Hace falta un repositorio en **GitHub** con Actions habilitado (el repo solo en Origin no ejecuta ese workflow).
 
-> Si tu equipo publica Releases: ve a **Releases**, descarga el `.exe` más reciente y sigue desde el paso 2 de la sección «Instalar Lumen».
+1. Entra al repositorio en **GitHub** (cuando esté enlazado o creado).
+2. Abre la pestaña **Actions**.
+3. Busca el flujo **Windows installer (Tauri)**.
+4. Abre la ejecución **más reciente en verde** (éxito).
+5. Al final de la página, en **Artifacts**, descarga **`lumen-windows-installers`**.
+6. Descomprime el ZIP y usa el archivo **`.exe`** (NSIS). También puede haber un `.msi`.
+
+> Si publican **Releases**: descarga el `.exe` más reciente y sigue en «Instalar Lumen».
+
+> Mientras tanto, el código y esta guía están en Origin: rama `cursor/fix-overview-dark-ui-95be`, PR draft https://cursor.com/codebase/breyner-ivan-dev/taller/pull/1
 
 ## 2. Instalar Lumen
 
