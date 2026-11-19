@@ -101,9 +101,8 @@ export async function researchBrief(
     mode: "research",
   });
 
-  // Si R1 inventa poco o falla, preferimos el borrador estructurado con las fuentes reales.
-  const answer =
-    polished.ok && looksSubstantive(polished.text, researchStyle) ? polished.text : draft || polished.text;
+  // El 1.5B suele acortar o rellenar; preferimos el borrador anclado a hits si el polish no aporta.
+  const answer = chooseResearchAnswer(polished.text, draft, researchStyle, polished.ok);
 
   return {
     applicable: true,
@@ -157,6 +156,23 @@ export function buildResearchDraft(
   return sections.join("\n");
 }
 
+export function chooseResearchAnswer(
+  polished: string,
+  draft: string,
+  style: string,
+  polishOk: boolean,
+): string {
+  if (!draft) return polished;
+  if (!polishOk || !looksSubstantive(polished, style) || isRepetitivePad(polished)) {
+    return draft;
+  }
+  // Si el polish es mucho más corto que el borrador, conservar el borrador.
+  if (style !== "corto" && polished.trim().length < draft.trim().length * 0.55) {
+    return draft;
+  }
+  return polished;
+}
+
 function looksSubstantive(text: string, style: string): boolean {
   const clean = text.replace(/_Herramienta:[^_\n]*_/g, "").trim();
   const minChars = style === "corto" ? 120 : 380;
@@ -164,7 +180,19 @@ function looksSubstantive(text: string, style: string): boolean {
   if (clean.length < minChars) return false;
   if (clean.split("\n").filter((line) => line.trim()).length < minLines) return false;
   // Señales de basura del modelo pequeño.
-  if (/guerres|caminarones|guantes de la carrera|guanacos/i.test(clean)) return false;
+  if (/guerres|caminarones|guantes de la carrera|guanacos|\bcaballos\b/i.test(clean)) return false;
   if (/Respuesta:\s*$/m.test(clean) && clean.length < 200) return false;
   return true;
+}
+
+/** R1 a veces enumera 10+ veces el mismo título de fuente sin aportar razas/hechos. */
+function isRepetitivePad(text: string): boolean {
+  const boldTitles = [...text.matchAll(/\*\*([^*]{3,80})\*\*/g)].map((m) => m[1].toLowerCase().trim());
+  if (boldTitles.length < 5) return false;
+  const counts = new Map<string, number>();
+  for (const title of boldTitles) {
+    counts.set(title, (counts.get(title) ?? 0) + 1);
+  }
+  const max = Math.max(...counts.values());
+  return max >= 4 && max / boldTitles.length >= 0.45;
 }

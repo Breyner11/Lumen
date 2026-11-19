@@ -122,6 +122,35 @@ test("buildResearchDraft arma secciones con fuentes", async () => {
   assert.doesNotMatch(draft, /guanaco|caballo/i);
 });
 
+test("chooseResearchAnswer conserva el borrador si el polish es relleno", async () => {
+  const { buildResearchDraft, chooseResearchAnswer } = await import("../lib/tools/research");
+  const draft = buildResearchDraft("perros pequeños", [
+    {
+      score: 0.5,
+      chunk: {
+        id: "1",
+        documentId: "d1",
+        title: "Chihuahua",
+        text: "El chihuahua es una de las razas más pequeñas del mundo y suele pesar menos de tres kilos.",
+        index: 0,
+      },
+    },
+  ]);
+  const padded = [
+    "**Perros**",
+    "",
+    "1. **Aprendizaje: perros chiquitos** texto",
+    "2. **Aprendizaje: perros chiquitos** texto",
+    "3. **Aprendizaje: perros chiquitos** texto",
+    "4. **Aprendizaje: perros chiquitos** texto",
+    "5. **Aprendizaje: perros chiquitos** texto",
+    "6. **Aprendizaje: perros chiquitos** texto",
+  ].join("\n");
+  const chosen = chooseResearchAnswer(padded, draft, "informativo", true);
+  assert.match(chosen, /Chihuahua/);
+  assert.doesNotMatch(chosen, /Aprendizaje: perros chiquitos/);
+});
+
 test("investigar ubica la pirámide de Giza con RAG", async () => {
   const result = await runActivity("investigar", "donde se ubica la piramide de giza");
   assert.equal(result.applicable, true);
