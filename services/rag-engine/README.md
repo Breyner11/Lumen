@@ -1,6 +1,6 @@
 # Motor RAG + Visión + SymPy + Aprendizaje (Python)
 
-Límite de RAM (~8 GB): todas las llamadas a Ollama llevan `keep_alive: 0`, `num_ctx: 4096`, `num_thread: 4`.
+Límite de RAM (~8 GB): chat/embeddings con `keep_alive: "5m"`, `num_ctx: 4096`, `num_thread: 4`. Visión usa `keep_alive: 0` tras analizar la imagen.
 
 | Función | Herramienta |
 |---|---|

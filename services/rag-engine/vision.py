@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from ollama_opts import with_ollama_limits
+from ollama_opts import VISION_KEEP_ALIVE, with_ollama_limits
 
 DEFAULT_VISION_MODELS = [
     "qwen2.5vl:3b",
@@ -70,10 +70,11 @@ async def read_image(
     )
     b64 = base64.b64encode(image_bytes).decode("ascii")
 
+    base = ollama_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
-                f"{ollama_url.rstrip('/')}/api/chat",
+                f"{base}/api/chat",
                 json=with_ollama_limits(
                     {
                         "model": model,
@@ -85,7 +86,8 @@ async def read_image(
                                 "images": [b64],
                             }
                         ],
-                    }
+                    },
+                    keep_alive=VISION_KEEP_ALIVE,
                 ),
             )
             if response.status_code != 200:
@@ -100,6 +102,14 @@ async def read_image(
                 or payload.get("response")
                 or ""
             ).strip()
+            # Liberar el VLM de RAM tras analizar la imagen.
+            try:
+                await client.post(
+                    f"{base}/api/generate",
+                    json={"model": model, "keep_alive": 0, "prompt": ""},
+                )
+            except Exception:
+                pass
     except Exception as error:  # noqa: BLE001
         return {"ok": False, "error": f"No pude hablar con Ollama: {error}"}
 

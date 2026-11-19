@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { OLLAMA_WARMUP_MESSAGE, polishAnswer } from "../lib/tools/polish";
+import { polishAnswer } from "../lib/tools/polish";
 
-test("si Ollama falla no vuelca el contexto crudo", async () => {
+test("si Ollama falla no vuelca el contexto crudo y muestra el error", async () => {
   const previous = process.env.OLLAMA_URL;
   process.env.OLLAMA_URL = "http://127.0.0.1:9";
   try {
@@ -17,7 +17,8 @@ test("si Ollama falla no vuelca el contexto crudo", async () => {
       sources: [{ title: "Wikipedia", url: "https://es.wikipedia.org/wiki/Hipotesis" }],
     });
     assert.equal(result.ok, false);
-    assert.equal(result.text, OLLAMA_WARMUP_MESSAGE);
+    assert.match(result.text, /Detalle:/i);
+    assert.match(result.text, /127\.0\.0\.1:9|Ollama no responde|fetch failed|ECONNREFUSED/i);
     assert.doesNotMatch(result.text, /Contexto recuperado/);
     assert.doesNotMatch(result.text, /Aprendizaje/);
     assert.equal(result.sources[0]?.title, "Wikipedia");

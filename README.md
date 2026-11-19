@@ -74,7 +74,7 @@ Comando rápido de prueba (con Ollama ya instalado):
 npm run rag:install && npm run rag:engine & npm run dev
 ```
 
-Luego abre `http://127.0.0.1:3847`. Todas las llamadas a Ollama usan `keep_alive: 0`, `num_ctx: 4096` y `num_thread: 4`.
+Luego abre `http://127.0.0.1:3847`. Ollama usa `http://127.0.0.1:11434`, chat con `keep_alive: "5m"`, `num_ctx: 4096` y `num_thread: 4` (timeout 120 s). La visión libera el modelo con `keep_alive: 0` tras analizar.
 
 ## Uso local
 

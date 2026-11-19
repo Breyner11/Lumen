@@ -1,4 +1,4 @@
-import { ollamaChat } from "@/lib/ollama";
+import { formatOllamaErrorForUser, ollamaChat } from "@/lib/ollama";
 import {
   stripCitationBlocks,
   type CitationImage,
@@ -7,6 +7,7 @@ import {
 import { detectAnswerStyle, styleInstruction, type AnswerStyle } from "@/lib/style";
 import type { ChatTurn } from "@/lib/types";
 
+/** @deprecated Prefer formatOllamaErrorForUser; se mantiene por tests antiguos. */
 export const OLLAMA_WARMUP_MESSAGE =
   "Iniciando modelo DeepSeek en Ollama, intenta de nuevo en unos segundos";
 
@@ -16,6 +17,7 @@ export type PolishResult = {
   images: CitationImage[];
   sources: CitationSource[];
   ok: boolean;
+  error?: string;
 };
 
 /**
@@ -51,6 +53,8 @@ export async function polishAnswer(options: {
   const internal = stripRawContextMarkers(seed).slice(0, 5000);
   const drafted = await ollamaChat({
     languageMode: "spanish",
+    keepAlive: "5m",
+    timeoutMs: 120_000,
     system: [
       "Eres Taller, un asistente todoterreno.",
       "Responde SIEMPRE en español natural y correcto, sin importar si las fuentes o documentos están en inglés u otro idioma.",
@@ -77,14 +81,15 @@ export async function polishAnswer(options: {
       { model: drafted.model },
     );
     // Nunca volcar recuperación cruda. Si el material ya era una respuesta limpia
-    // (p. ej. lección aprendida), la reutilizamos; si no, pedimos reintentar.
+    // (p. ej. lección aprendida), la reutilizamos; si no, mostramos el error real.
     const clean = stripRawContextMarkers(internal);
     if (!clean || looksLikeRawRetrieval(clean)) {
       return {
-        text: OLLAMA_WARMUP_MESSAGE,
+        text: formatOllamaErrorForUser(drafted.error, drafted.model),
         images,
         sources,
         ok: false,
+        error: drafted.error,
       };
     }
     return {
@@ -92,6 +97,7 @@ export async function polishAnswer(options: {
       images,
       sources,
       ok: false,
+      error: drafted.error,
     };
   }
 

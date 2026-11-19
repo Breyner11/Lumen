@@ -2,6 +2,6 @@
 
 - Responde SIEMPRE en español natural y correcto, sin importar si las fuentes o documentos están en inglés u otro idioma.
 - La ÚNICA excepción es cuando el usuario pida explícitamente traducir un texto (oficio Traducir o intención de traducción).
-- Control de RAM (~8 GB): Ollama con `deepseek-r1:1.5b`, `qwen2.5vl:3b`, `nomic-embed-text`; en todas las llamadas `keep_alive: 0` y `options: { "num_ctx": 4096, "num_thread": 4 }`.
+- Control de RAM (~8 GB): Ollama en `http://127.0.0.1:11434` con `deepseek-r1:1.5b`, `qwen2.5vl:3b`, `nomic-embed-text`; chat con `keep_alive: "5m"` y `options: { "num_ctx": 4096, "num_thread": 4 }`; visión usa `keep_alive: 0` tras analizar la imagen.
 - No vuelques fragmentos crudos de RAG/web al usuario; úsalos como contexto interno y redacta una respuesta limpia y estructurada.
 - Prioriza búsquedas web en español (`region=es-es`) cuando haya internet.

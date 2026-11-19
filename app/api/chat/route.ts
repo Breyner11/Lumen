@@ -100,7 +100,30 @@ function composeStream(request: ChatRequest, signal: AbortSignal): ReadableStrea
   return new ReadableStream({
     async start(controller) {
       try {
-        const { OLLAMA_CHAT_MODEL } = await import("@/lib/ollama");
+        const { OLLAMA_CHAT_MODEL, formatOllamaErrorForUser, ensureChatModel } = await import(
+          "@/lib/ollama"
+        );
+        const readiness = await ensureChatModel(signal);
+        if (!readiness.ok) {
+          console.error("[taller/chat] Ollama no listo:", readiness.error);
+          controller.enqueue(
+            sse({
+              type: "content",
+              text: formatOllamaErrorForUser(readiness.error, readiness.model),
+            }),
+          );
+          controller.enqueue(
+            sse({
+              type: "done",
+              mode: "taller",
+              model: readiness.model,
+              images: [],
+              sources: [],
+            }),
+          );
+          controller.close();
+          return;
+        }
         const composed = await composeConversation({ ...request, now: new Date() });
         if (signal.aborted) {
           controller.close();
@@ -115,17 +138,18 @@ function composeStream(request: ChatRequest, signal: AbortSignal): ReadableStrea
         }
         const detail = caught instanceof Error ? caught.message : String(caught);
         console.error("[taller/chat] error al componer:", detail);
+        const { formatOllamaErrorForUser, OLLAMA_CHAT_MODEL } = await import("@/lib/ollama");
         controller.enqueue(
           sse({
             type: "content",
-            text: "Iniciando modelo DeepSeek en Ollama, intenta de nuevo en unos segundos",
+            text: formatOllamaErrorForUser(detail, OLLAMA_CHAT_MODEL),
           }),
         );
         controller.enqueue(
           sse({
             type: "done",
             mode: "taller",
-            model: "taller",
+            model: OLLAMA_CHAT_MODEL,
             images: [],
             sources: [],
           }),
