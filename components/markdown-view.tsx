@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { ExternalLink, Link2, X } from "lucide-react";
 import { stripCitationBlocks } from "@/lib/rag/citations";
 import { sanitizeBrokenMarkdown } from "@/lib/style-rewrite";
+import { sourceDomain, stripOverviewRows } from "@/lib/tools/overview";
 import { splitToolBadge } from "@/lib/tool-badge";
 
 export function MarkdownView({
@@ -18,10 +19,13 @@ export function MarkdownView({
   const withoutTool = splitToolBadge(text).content;
   const { thinking, content: afterThink } = splitThinking(sanitizeBrokenMarkdown(withoutTool));
   const stripped = stripCitationBlocks(afterThink);
-  const content = stripped.content;
+  const overview = stripOverviewRows(stripped.content);
+  const content = overview.content;
+  const rowItems = overview.items;
   const images = imagesProp?.length ? imagesProp : stripped.images;
   const sources = sourcesProp?.length ? sourcesProp : stripped.sources;
   const [lightbox, setLightbox] = useState<{ url: string; title: string } | null>(null);
+  const showGallery = images.length > 0 && rowItems.length === 0;
 
   return (
     <div className="md-body space-y-3">
@@ -34,7 +38,7 @@ export function MarkdownView({
         </details>
       ) : null}
 
-      {images.length > 0 ? (
+      {showGallery ? (
         <div className="flex gap-2 overflow-x-auto pb-1">
           {images.map((image) => (
             <button
@@ -62,6 +66,39 @@ export function MarkdownView({
 
       {renderBlocks(content)}
 
+      {rowItems.length > 0 ? (
+        <div className="divide-y divide-border/70 overflow-hidden rounded-2xl border border-border/70 bg-background/40">
+          {rowItems.map((item, index) => (
+            <div
+              key={`${item.title}-${item.text.slice(0, 24)}`}
+              className="animate-cascade flex gap-3 px-3 py-3"
+              style={{ animationDelay: `${index * 45}ms` }}
+            >
+              {item.imageUrl ? (
+                <button
+                  type="button"
+                  className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-border bg-muted/40"
+                  onClick={() => setLightbox({ url: item.imageUrl!, title: item.title })}
+                  aria-label={`Ver imagen: ${item.title}`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={item.imageUrl}
+                    alt={item.title}
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                  />
+                </button>
+              ) : null}
+              <p className="min-w-0 text-sm leading-6">
+                <strong>{item.title}:</strong> {item.text}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {sources.length > 0 ? (
         <details className="rounded-xl border border-border/80 bg-card/70 px-3 py-2 shadow-sm">
           <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground">
@@ -69,23 +106,29 @@ export function MarkdownView({
             Fuentes ({sources.length})
           </summary>
           <ul className="mt-2 space-y-2 border-t border-border/60 pt-2">
-            {sources.map((source, index) => (
-              <li key={`${source.title}-${index}`} className="text-sm leading-5">
-                {source.url ? (
-                  <a
-                    href={source.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-start gap-1.5 text-foreground underline-offset-2 hover:underline"
-                  >
-                    <ExternalLink className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                    <span>{source.title}</span>
-                  </a>
-                ) : (
-                  <span className="text-muted-foreground">{source.title}</span>
-                )}
-              </li>
-            ))}
+            {sources.map((source, index) => {
+              const domain = sourceDomain(source.url);
+              return (
+                <li key={`${source.title}-${index}`} className="text-sm leading-5">
+                  {source.url ? (
+                    <a
+                      href={source.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="group inline-flex flex-col gap-0.5 text-foreground"
+                    >
+                      <span className="inline-flex items-start gap-1.5 underline-offset-2 group-hover:underline">
+                        <ExternalLink className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                        <span>{source.title}</span>
+                      </span>
+                      {domain ? <span className="pl-5 text-xs text-muted-foreground">{domain}</span> : null}
+                    </a>
+                  ) : (
+                    <span className="text-muted-foreground">{source.title}</span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </details>
       ) : null}

@@ -7,9 +7,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-body), "Manrope", sans-serif;
+  --font-sans: var(--font-body), "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-code), "JetBrains Mono", ui-monospace, monospace;
-  --font-heading: var(--font-display), "Fraunces", Georgia, serif;
+  --font-heading: var(--font-body), "Inter", ui-sans-serif, system-ui, sans-serif;
   --color-mark: var(--mark);
   --color-mark-ink: var(--mark-ink);
   --color-glow: var(--glow);
@@ -53,45 +53,83 @@
 
 :root,
 html[data-skin="brisa"] {
-  --background: oklch(0.94 0.018 230);
-  --foreground: oklch(0.24 0.03 250);
-  --card: oklch(0.985 0.008 230 / 0.86);
-  --card-foreground: oklch(0.24 0.03 250);
-  --popover: oklch(0.99 0.006 230);
-  --popover-foreground: oklch(0.24 0.03 250);
-  --primary: oklch(0.48 0.09 185);
-  --primary-foreground: oklch(0.98 0.01 180);
-  --secondary: oklch(0.9 0.02 230);
-  --secondary-foreground: oklch(0.28 0.03 250);
-  --muted: oklch(0.91 0.018 230);
-  --muted-foreground: oklch(0.48 0.03 250);
-  --accent: oklch(0.9 0.035 185);
-  --accent-foreground: oklch(0.3 0.05 185);
-  --destructive: oklch(0.55 0.18 28);
-  --border: oklch(0.84 0.02 230);
-  --input: oklch(0.84 0.02 230);
-  --ring: oklch(0.55 0.08 185);
+  /* Lumen light: teal limpio, mucho aire, alto contraste */
+  --background: #f4faf9;
+  --foreground: #0f1c1a;
+  --card: #ffffff;
+  --card-foreground: #0f1c1a;
+  --popover: #ffffff;
+  --popover-foreground: #0f1c1a;
+  --primary: #0f766e;
+  --primary-foreground: #ecfeff;
+  --secondary: #e6f4f1;
+  --secondary-foreground: #134e4a;
+  --muted: #eef6f4;
+  --muted-foreground: #4b635e;
+  --accent: #d9f3ee;
+  --accent-foreground: #115e59;
+  --destructive: #dc2626;
+  --border: #d5e5e1;
+  --input: #d5e5e1;
+  --ring: #14b8a6;
   --mark: #0f766e;
-  --mark-ink: #0b4f4a;
+  --mark-ink: #115e59;
   --glow: #5eead4;
-  --radius: 0.95rem;
-  --chart-1: oklch(0.7 0.08 185);
-  --chart-2: oklch(0.58 0.05 230);
-  --chart-3: oklch(0.48 0.04 250);
-  --chart-4: oklch(0.4 0.03 250);
-  --chart-5: oklch(0.32 0.03 250);
-  --sidebar: oklch(0.97 0.012 230 / 0.78);
-  --sidebar-foreground: oklch(0.24 0.03 250);
-  --sidebar-primary: oklch(0.48 0.09 185);
-  --sidebar-primary-foreground: oklch(0.98 0.01 180);
-  --sidebar-accent: oklch(0.92 0.025 185);
-  --sidebar-accent-foreground: oklch(0.28 0.04 185);
-  --sidebar-border: oklch(0.86 0.02 230);
-  --sidebar-ring: oklch(0.55 0.08 185);
+  --radius: 1rem;
+  --chart-1: #14b8a6;
+  --chart-2: #0f766e;
+  --chart-3: #5eead4;
+  --chart-4: #99f6e4;
+  --chart-5: #134e4a;
+  --sidebar: #ffffffcc;
+  --sidebar-foreground: #0f1c1a;
+  --sidebar-primary: #0f766e;
+  --sidebar-primary-foreground: #ecfeff;
+  --sidebar-accent: #e6f4f1;
+  --sidebar-accent-foreground: #134e4a;
+  --sidebar-border: #d5e5e1;
+  --sidebar-ring: #14b8a6;
   --skin-atmosphere:
-    radial-gradient(ellipse 90% 70% at 8% -10%, oklch(0.86 0.05 185 / 0.55), transparent 55%),
-    radial-gradient(ellipse 70% 50% at 95% 5%, oklch(0.88 0.04 250 / 0.45), transparent 50%),
-    linear-gradient(180deg, oklch(0.95 0.016 230), oklch(0.92 0.02 235));
+    radial-gradient(ellipse 80% 60% at 50% -8%, rgba(94, 234, 212, 0.28), transparent 55%),
+    radial-gradient(ellipse 50% 40% at 100% 0%, rgba(15, 118, 110, 0.08), transparent 45%),
+    linear-gradient(180deg, #f7fcfb, #eef6f4);
+}
+
+.dark,
+html.dark,
+html.dark[data-skin="brisa"] {
+  --background: #0b1413;
+  --foreground: #e8f5f2;
+  --card: #121c1a;
+  --card-foreground: #e8f5f2;
+  --popover: #121c1a;
+  --popover-foreground: #e8f5f2;
+  --primary: #2dd4bf;
+  --primary-foreground: #042f2e;
+  --secondary: #1a2a27;
+  --secondary-foreground: #ccfbf1;
+  --muted: #16221f;
+  --muted-foreground: #9db5af;
+  --accent: #1c322e;
+  --accent-foreground: #99f6e4;
+  --destructive: #f87171;
+  --border: #243532;
+  --input: #243532;
+  --ring: #2dd4bf;
+  --mark: #2dd4bf;
+  --mark-ink: #99f6e4;
+  --glow: #5eead4;
+  --sidebar: #0f1917cc;
+  --sidebar-foreground: #e8f5f2;
+  --sidebar-primary: #2dd4bf;
+  --sidebar-primary-foreground: #042f2e;
+  --sidebar-accent: #1a2a27;
+  --sidebar-accent-foreground: #ccfbf1;
+  --sidebar-border: #243532;
+  --sidebar-ring: #2dd4bf;
+  --skin-atmosphere:
+    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(45, 212, 191, 0.14), transparent 55%),
+    linear-gradient(180deg, #0b1413, #0e1816);
 }
 
 html[data-skin="tinta"] {
@@ -310,7 +348,7 @@ html[data-skin="bosque"] {
 @keyframes rise-in {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -318,18 +356,69 @@ html[data-skin="bosque"] {
   }
 }
 
-@keyframes soft-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 35%, transparent);
+@keyframes cascade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
   }
-  50% {
-    box-shadow: 0 0 0 12px transparent;
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
   }
 }
 
 .animate-rise {
-  animation: rise-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise-in 220ms ease-out both;
+}
+
+.animate-cascade {
+  animation: cascade-in 200ms ease-out both;
+}
+
+.hover-lift {
+  transition:
+    transform 180ms ease-out,
+    box-shadow 180ms ease-out,
+    border-color 180ms ease-out,
+    background-color 180ms ease-out;
+}
+
+.hover-lift:hover {
+  transform: translateY(-1px);
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--muted) 100%, transparent) 20%,
+    color-mix(in oklch, var(--card) 90%, white) 50%,
+    color-mix(in oklch, var(--muted) 100%, transparent) 80%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-cascade,
+  .status-thinking,
+  .status-thinking-dots > span,
+  .brand-mark,
+  .skeleton-shimmer,
+  .hover-lift {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
 }
 
 @keyframes status-breathe {

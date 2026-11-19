@@ -4,6 +4,13 @@ import type { RagDocument, RagHit } from "@/lib/rag/types";
 import type { Lesson } from "@/lib/lessons";
 import { detectAnswerStyle } from "@/lib/style";
 import { rewriteAnswerStyle } from "@/lib/style-rewrite";
+import {
+  buildOverviewFallback,
+  cleanCitationSources,
+  formatOverviewMarkdown,
+  prepareContextSnippets,
+  redactOverviewAnswer,
+} from "@/lib/tools/overview";
 import type { ChatTurn } from "@/lib/types";
 
 type ToolResult = {
@@ -84,7 +91,7 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
   },
   {
     match:
-      /^(qu[eé]\s+es\s+(una?\s+)?)?ciudades?\s*$|^(significado|definici[oó]n)\s+de\s+(una?\s+)?ciudades?\s*$/i,
+      /^(qu[eé]\s+es\s+(una?\s+)?)?ciudad(?:es)?\s*$|^(significado|definici[oó]n)\s+de\s+(una?\s+)?ciudad(?:es)?\s*$/i,
     title: "Ciudades",
     body: [
       "Ciudades es el plural de ciudad: un asentamiento humano de tamaño considerable, con población densa, administración propia y servicios urbanos (comercio, transporte, salud, educación).",
@@ -106,29 +113,6 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
       '- "Bogotá es una de las ciudades más grandes de Colombia."',
       '- "Prefiere vivir en la ciudad por el acceso al trabajo y a los servicios."',
       '- "Las ciudades costeras suelen crecer alrededor del puerto."',
-    ].join("\n"),
-  },
-  {
-    match: /\bejemplos?\s+de\s+(una?\s+)?ciudad(?:es)?\b/i,
-    title: "Ejemplos de ciudad",
-    body: [
-      "Una ciudad es un asentamiento urbano con mucha población, servicios y gobierno local. Estos son ejemplos claros:",
-      "",
-      "**Ciudades concretas**",
-      "",
-      "- **Bogotá (Colombia):** capital andina y centro administrativo del país.",
-      "- **Ciudad de México (México):** una de las mayores metrópolis de América Latina.",
-      "- **Buenos Aires (Argentina):** capital del Cono Sur, con fuerte peso cultural y portuario.",
-      "- **Madrid (España):** capital española, sede del gobierno y gran nodo de transporte.",
-      "- **Tokio (Japón):** megaciudad asiática, referente de densidad urbana y transporte.",
-      "- **París (Francia):** capital europea reconocida por su patrimonio y turismo.",
-      "",
-      "**Tipos de ciudad (con ejemplo)**",
-      "",
-      "- **Capital:** sede del gobierno (Bogotá, Madrid).",
-      "- **Portuaria:** crece alrededor del mar o un río navegable (Cartagena, Barcelona).",
-      "- **Industrial:** marcada por fábricas y logística (Turín, Medellín en su etapa textil).",
-      "- **Turística:** vive en buena parte del visitante (Cusco, Venecia).",
     ].join("\n"),
   },
 ];
@@ -158,7 +142,7 @@ export async function researchBrief(
     includeLiveSources: true,
   });
 
-  const sources =
+  const rawSources =
     rag.sources.length > 0
       ? rag.sources
       : sourcesFromHits(
@@ -167,81 +151,70 @@ export async function researchBrief(
             source: hit.chunk.source,
           })),
         );
+  const sources = cleanCitationSources(rawSources);
+  const snippets = prepareContextSnippets(rag.hits);
+  const images = rag.images.slice(0, 3);
 
-  const draft = buildResearchDraft(question, rag.hits, known);
-  if (!draft && !rag.images.length) {
+  const redacted = await redactOverviewAnswer({
+    question,
+    snippets,
+    known,
+    images,
+    timeoutMs: 28_000,
+  });
+
+  const overview =
+    redacted.draft ||
+    buildOverviewFallback({ question, snippets, known, images }) ||
+    null;
+
+  if (!overview) {
     return {
       applicable: false,
       answer: [
-        `No recuperé material útil para «${question}».`,
+        "No encontré información confiable para responder con seguridad.",
         "",
         "Prueba a reformular o carga un documento en el botón +.",
       ].join("\n"),
       notes: "",
       images: [],
-      sources: [],
+      sources,
     };
   }
 
+  let answer = formatOverviewMarkdown(overview, {
+    rows: overview.items.some((item) => Boolean(item.imageUrl)),
+  });
   const style = detectAnswerStyle(options?.messages ?? []);
-  // Borrador anclado a fuentes (sin pasar por R1: más rápido y sin alucinaciones).
-  const answer =
-    style === "corto" || style === "natural" ? rewriteAnswerStyle(draft, style) : draft;
+  if (style === "corto" || style === "natural") {
+    answer = rewriteAnswerStyle(answer, style);
+  }
 
   return {
     applicable: true,
     answer,
-    images: rag.images,
+    images,
     sources,
     notes: "",
+    thinking: redacted.ok ? undefined : redacted.error,
   };
 }
 
-/** Borrador informativo a partir de hits reales (evita alucinaciones del 1.5B). */
+/** Borrador overview a partir de hits (contexto limpio; sin pegar scrapes). */
 export function buildResearchDraft(
   question: string,
   hits: RagHit[],
   known?: { title: string; body: string },
 ): string {
+  const snippets = prepareContextSnippets(hits);
+  const overview = buildOverviewFallback({ question, snippets, known });
+  if (overview) return formatOverviewMarkdown(overview);
+
   if (known || looksLikeDefinitionQuery(question)) {
     const definition = buildDefinitionDraft(question, hits, known);
     if (definition) return definition;
   }
-
-  const heading = cleanQuestionHeading(question);
-  const sections: string[] = heading ? [`**${heading}**`, ""] : [];
-
-  const queryTerms = tokenizeQuery(question);
-  const seen = new Set<string>();
-  const useful = hits
-    .filter((hit) => hitLooksRelevant(hit, queryTerms))
-    .map((hit) => ({
-      title: cleanHitTitle(hit.chunk.title, hit.chunk.source),
-      text: cleanHitText(hit.chunk.text),
-    }))
-    .filter((item) => isUsableSourceSnippet(item.text))
-    .filter((item) => {
-      const key = normalizeText(item.text).slice(0, 96);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 6);
-
-  if (useful.length) {
-    sections.push("**Qué dicen las fuentes**", "");
-    for (const item of useful) {
-      sections.push(`- **${item.title}:** ${item.text}`);
-    }
-    sections.push("");
-  }
-
-  if (!useful.length) return "";
-
-  const summary = summarizeSourceSnippets(useful);
-  sections.push("**En resumen**", "", summary);
-
-  return sections.join("\n");
+  return "";
 }
 
 /** Resume en 2–3 puntos concretos lo que aportan las fuentes (nunca un placeholder). */

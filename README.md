@@ -1,8 +1,8 @@
-# Taller
+# Lumen
 
 Asistente todoterreno en un solo chat (**Preguntar**): calcula, investiga, estudia, programa, escribe, organiza, traduce, resume, atiende emergencias/vida diaria/proyectos, lee fotos, transcribe audio y analiza YouTube/GitHub/DOI. Aprende de internet en local (máx. ~8 GB RAM con Ollama). Armado sobre [deepseek-recipe](https://github.com/deepseek-ai/deepseek-recipe).
 
-Al abrir la app verás **Bienvenido** y **¿En qué te puedo ayudar hoy?** Hay seis interfaces (Brisa, Tinta, Solar, Noche, Coral, Bosque) y un historial de lo que buscaste.
+El nombre visible vive en `lib/brand.ts` (`APP_NAME`). Al abrir verás un inicio tipo buscador con logo, caja grande y sugerencias; después de la primera pregunta el chat baja. Hay modo claro/oscuro (respeta el sistema) e interfaces opcionales.
 
 **Investigar** (y las preguntas abiertas en Preguntar) consulta bases verificables: Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC y Open Library. El panel **Receta** muestra el prompt con los tokens de `deepseek-recipe` 0.2.0.
 

@@ -7,14 +7,18 @@ import {
   Library,
   MessageCircle,
   Mic,
+  Moon,
   Palette,
   PanelRight,
   Plus,
   Square,
+  Sun,
   Trash2,
   Wifi,
   X,
 } from "lucide-react";
+import { LumenLogo } from "@/components/lumen-logo";
+import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
 import { ACTIVITY_MAP, MODEL_LABEL } from "@/lib/activities";
 import { syncLessonToEngine } from "@/lib/rag/sync-lesson";
 import { STYLE_QUICK_PROMPTS } from "@/lib/style";
@@ -58,16 +62,19 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Textarea } from "@/components/ui/textarea";
 
 const STORAGE_KEY = "taller-receta-v3";
+const THEME_KEY = "lumen-theme";
 const EMPTY_THREAD: StoredMessage[] = [];
 const activity: ActivityId = "preguntar";
 
 type Status = "loading" | "taller" | "model";
+type ThemeMode = "light" | "dark";
 
 export function TallerApp() {
   const [model, setModel] = useState<ModelId>("flash");
   const [effort, setEffort] = useState<Effort>("high");
   const [thinking, setThinking] = useState(true);
   const [skin, setSkin] = useState<SkinId>("brisa");
+  const [theme, setTheme] = useState<ThemeMode>("light");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
   const [clock, setClock] = useState(0);
@@ -112,9 +119,22 @@ export function TallerApp() {
     [sessions, activeSessionId],
   );
 
+  function applyTheme(next: ThemeMode) {
+    setTheme(next);
+    document.documentElement.classList.toggle("dark", next === "dark");
+    localStorage.setItem(THEME_KEY, next);
+  }
+
+  function toggleTheme() {
+    applyTheme(theme === "dark" ? "light" : "dark");
+  }
+
   /* eslint-disable react-hooks/set-state-in-effect -- restore localStorage after hydration */
   useEffect(() => {
     setClock(Date.now());
+    const storedTheme = localStorage.getItem(THEME_KEY);
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    applyTheme(storedTheme === "dark" || storedTheme === "light" ? storedTheme : prefersDark ? "dark" : "light");
     const stored = readStorage();
     if (stored) {
       setModel(stored.model);
@@ -737,10 +757,11 @@ export function TallerApp() {
     <div className="flex h-dvh text-foreground">
       <aside className="glass-panel m-3 hidden w-[17.5rem] shrink-0 flex-col overflow-hidden rounded-[1.4rem] md:flex">
         <div className="px-5 pt-6 pb-4">
-          <p className="font-heading text-[2rem] leading-none tracking-tight italic">Taller</p>
-          <p className="mt-2 text-sm leading-5 text-muted-foreground">
-            Un solo chat. Pregunta lo que necesites.
-          </p>
+          <div className="flex items-center gap-2.5 text-primary">
+            <LumenLogo className="size-8" />
+            <p className="text-[1.65rem] font-semibold leading-none tracking-tight">{APP_NAME}</p>
+          </div>
+          <p className="mt-2 text-sm leading-5 text-muted-foreground">{APP_TAGLINE}</p>
         </div>
         <nav className="flex-1 space-y-3 overflow-y-auto px-3 pb-3" aria-label="Chats">
           <button
@@ -826,6 +847,10 @@ export function TallerApp() {
           </div>
         </nav>
         <div className="space-y-2 border-t border-border/70 px-3 py-3">
+          <Button variant="outline" className="w-full justify-start hover-lift" onClick={toggleTheme}>
+            {theme === "dark" ? <Sun /> : <Moon />}
+            {theme === "dark" ? "Modo claro" : "Modo oscuro"}
+          </Button>
           <Button variant="outline" className="w-full justify-start" onClick={() => setSkinsOpen(true)}>
             <Palette />
             Interfaces
@@ -852,10 +877,28 @@ export function TallerApp() {
           <Button variant="outline" className="md:hidden titlebar-no-drag" onClick={() => setActivitiesOpen(true)}>
             Menú
           </Button>
-          <div className="min-w-0 flex-1">
-            <p className="truncate font-heading text-xl leading-none italic md:text-2xl">{current.label}</p>
-            <p className="mt-1 truncate text-xs text-muted-foreground md:text-sm">{current.blurb}</p>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <LumenLogo className="size-7 text-primary md:hidden" />
+            <div className="min-w-0">
+              <p className="truncate text-lg font-semibold leading-none tracking-tight md:text-xl">
+                <span className="md:hidden">{APP_NAME}</span>
+                <span className="hidden md:inline">{current.label}</span>
+              </p>
+              <p className="mt-1 truncate text-xs text-muted-foreground md:text-sm">
+                <span className="md:hidden">{APP_TAGLINE}</span>
+                <span className="hidden md:inline">{current.blurb}</span>
+              </p>
+            </div>
           </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            onClick={toggleTheme}
+            aria-label={theme === "dark" ? "Modo claro" : "Modo oscuro"}
+          >
+            {theme === "dark" ? <Sun /> : <Moon />}
+          </Button>
           <StatusBadge status={status} />
           <Button variant="ghost" size="icon" className="xl:hidden" onClick={() => setRecipeOpen(true)} aria-label="Ver la receta">
             <PanelRight />
@@ -922,9 +965,13 @@ export function TallerApp() {
                 starters={current.starters}
                 recent={previousChats.filter((session) => session.id !== activeSessionId && session.messages.length > 0).slice(0, 3)}
                 clock={clock}
+                draft={draft}
+                onDraftChange={setDraft}
+                onSubmit={() => void send()}
                 onPick={(starter) => void send(starter)}
                 onOpenChat={openChat}
-                onBrowseSkins={() => setSkinsOpen(true)}
+                theme={theme}
+                onToggleTheme={toggleTheme}
               />
             ) : (
               thread.map((message, index) => (
@@ -955,7 +1002,9 @@ export function TallerApp() {
         </div>
 
         <form
-          className="mx-3 mb-3 rounded-[1.3rem] px-3 py-3 glass-panel md:mx-0 md:mr-3 md:mb-3"
+          className={`mx-3 mb-3 rounded-[1.3rem] px-3 py-3 glass-panel md:mx-0 md:mr-3 md:mb-3 ${
+            thread.length === 0 ? "hidden md:hidden" : ""
+          }`}
           onSubmit={(event) => {
             event.preventDefault();
             void send();
@@ -1115,7 +1164,7 @@ export function TallerApp() {
           </SheetHeader>
           <div className="space-y-4 px-1 pb-6">
             <p className="text-sm leading-6 text-muted-foreground">
-              Pega apuntes o textos. Taller los parte en fragmentos, los indexa (TF-IDF) y recupera los más parecidos a tu pregunta antes de responder.
+              Pega apuntes o textos. {APP_NAME} los parte en fragmentos, los indexa (TF-IDF) y recupera los más parecidos a tu pregunta antes de responder.
             </p>
             <div className="space-y-2">
               <input
@@ -1207,7 +1256,7 @@ export function TallerApp() {
           <DialogHeader>
             <DialogTitle className="font-heading text-2xl italic">Elige una interfaz</DialogTitle>
             <DialogDescription>
-              Seis caras distintas para Taller. Toca una y la app cambia al momento. Puedes volver a este panel cuando quieras.
+              Seis caras distintas para {APP_NAME}. Toca una y la app cambia al momento. Puedes volver a este panel cuando quieras.
             </DialogDescription>
           </DialogHeader>
           <SkinGallery current={skin} onSelect={chooseSkin} />
@@ -1241,7 +1290,7 @@ function SkinGallery({ current, onSelect }: { current: SkinId; onSelect: (id: Sk
             >
               <div className="flex h-full flex-col justify-between rounded-xl p-3" style={{ background: skin.swatches[0], color: skin.swatches[2] }}>
                 <span className="font-heading text-lg italic" style={{ color: skin.swatches[1] }}>
-                  Taller
+                  {APP_NAME}
                 </span>
                 <span className="text-[11px] opacity-80">Bienvenido</span>
               </div>
@@ -1269,61 +1318,93 @@ function WelcomeState({
   starters,
   recent,
   clock,
+  draft,
+  onDraftChange,
+  onSubmit,
   onPick,
   onOpenChat,
-  onBrowseSkins,
+  theme,
+  onToggleTheme,
 }: {
   starters: string[];
   recent: ChatSession[];
   clock: number;
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onSubmit: () => void;
   onPick: (starter: string) => void;
   onOpenChat: (sessionId: string) => void;
-  onBrowseSkins: () => void;
+  theme: ThemeMode;
+  onToggleTheme: () => void;
 }) {
   return (
-    <div className="animate-rise pt-4 md:pt-10">
-      <p className="font-heading text-5xl tracking-tight italic md:text-6xl">Bienvenido</p>
-      <p className="mt-3 max-w-xl text-xl leading-8 text-muted-foreground md:text-2xl">
-        ¿En qué te puedo ayudar hoy?
-      </p>
-      <p className="mt-3 max-w-lg text-sm leading-6 text-muted-foreground">
-        Todo en un solo chat: cuentas, dudas, textos o código. Taller elige la herramienta. Usa Nuevo chat para empezar otra
-        conversación y vuelve a los chats anteriores desde la barra lateral.
-      </p>
-      <div className="mt-5 flex flex-wrap gap-2">
-        <Button variant="secondary" onClick={onBrowseSkins}>
-          <Palette />
-          Ver interfaces
-        </Button>
+    <div className="animate-rise mx-auto flex w-full max-w-xl flex-col items-center px-1 pb-8 pt-8 md:pt-16">
+      <div className="mb-5 flex flex-col items-center text-primary">
+        <LumenLogo className="size-14 md:size-16" />
+        <h1 className="mt-3 text-4xl font-semibold tracking-tight text-foreground md:text-5xl">{APP_NAME}</h1>
+        <p className="mt-2 max-w-md text-center text-sm leading-6 text-muted-foreground md:text-base">
+          {APP_TAGLINE}
+        </p>
       </div>
-      <div className="mt-7 flex flex-col gap-2">
-        {starters.map((starter, index) => (
+
+      <form
+        className="w-full"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit();
+        }}
+      >
+        <div className="hover-lift flex items-center gap-2 rounded-[1.6rem] border border-border bg-card px-3 py-2 shadow-sm">
+          <input
+            value={draft}
+            onChange={(event) => onDraftChange(event.target.value)}
+            placeholder="Pregunta lo que necesites…"
+            className="min-w-0 flex-1 bg-transparent px-2 py-3 text-base outline-none placeholder:text-muted-foreground"
+            aria-label="Buscar o preguntar"
+          />
+          <Button type="submit" size="icon" className="size-11 shrink-0 rounded-full" disabled={!draft.trim()} aria-label="Enviar">
+            <ArrowUp />
+          </Button>
+        </div>
+      </form>
+
+      <div className="mt-5 flex w-full flex-wrap justify-center gap-2">
+        {starters.slice(0, 4).map((starter, index) => (
           <button
             key={starter}
             type="button"
             onClick={() => onPick(starter)}
-            className="animate-rise rounded-2xl border border-border bg-card/80 px-4 py-3 text-left text-sm leading-6 transition hover:border-primary/40 hover:bg-card"
-            style={{ animationDelay: `${120 + index * 60}ms` }}
+            className="animate-cascade hover-lift rounded-full border border-border bg-card/90 px-3.5 py-2 text-left text-xs leading-5 text-foreground transition hover:border-primary/35 md:text-sm"
+            style={{ animationDelay: `${80 + index * 40}ms` }}
           >
-            {starter.replace(/```[a-z]*\n?|```/g, "").trim()}
+            {starter.replace(/```[a-z]*\n?|```/g, "").trim().slice(0, 48)}
           </button>
         ))}
       </div>
+
+      <div className="mt-6 flex items-center gap-2">
+        <Button type="button" variant="ghost" size="sm" className="hover-lift" onClick={onToggleTheme}>
+          {theme === "dark" ? <Sun /> : <Moon />}
+          {theme === "dark" ? "Claro" : "Oscuro"}
+        </Button>
+      </div>
+
       {recent.length > 0 && (
-        <div className="mt-8">
-          <p className="mb-3 flex items-center gap-2 text-sm font-medium">
+        <div className="mt-8 w-full">
+          <p className="mb-3 flex items-center justify-center gap-2 text-sm font-medium text-muted-foreground">
             <Clock3 className="size-4" />
             Chats anteriores
           </p>
           <div className="flex flex-col gap-2">
-            {recent.map((session) => (
+            {recent.map((session, index) => (
               <button
                 key={session.id}
                 type="button"
                 onClick={() => onOpenChat(session.id)}
-                className="rounded-xl border border-border/80 bg-background/50 px-3 py-2 text-left transition hover:border-primary/30"
+                className="animate-cascade hover-lift rounded-2xl border border-border/80 bg-card px-3 py-2.5 text-left transition hover:border-primary/30"
+                style={{ animationDelay: `${120 + index * 40}ms` }}
               >
-                <p className="truncate text-sm">{session.title}</p>
+                <p className="truncate text-sm font-medium">{session.title}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {clock ? formatHistoryTime(session.updatedAt, clock) : "…"}
                 </p>
@@ -1403,12 +1484,12 @@ function MessageBubble({
         className={
           mine
             ? "rounded-3xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground shadow-sm"
-            : "rounded-3xl rounded-bl-md border border-border bg-card/90 px-4 py-3 shadow-sm"
+            : "hover-lift rounded-3xl rounded-bl-md border border-border bg-card px-4 py-3 shadow-sm"
         }
       >
         {!mine && (
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{message.mode === "model" ? "DeepSeek" : "Taller"}</Badge>
+            <Badge variant="outline">{message.mode === "model" ? "DeepSeek" : APP_NAME}</Badge>
             {tool ? (
               <Badge variant="secondary" className="font-normal text-muted-foreground">
                 {tool}
@@ -1485,7 +1566,11 @@ function MessageBubble({
 
 function StatusBadge({ status }: { status: Status }) {
   if (status === "loading") return null;
-  return <Badge variant={status === "model" ? "default" : "secondary"}>{status === "model" ? "DeepSeek" : "Modo taller"}</Badge>;
+  return (
+    <Badge variant={status === "model" ? "default" : "secondary"}>
+      {status === "model" ? "DeepSeek" : APP_NAME}
+    </Badge>
+  );
 }
 
 function Segment({
@@ -1560,7 +1645,7 @@ function HowItWorks() {
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="font-heading italic">Bienvenido a Taller</DialogTitle>
+          <DialogTitle className="font-semibold tracking-tight">Bienvenido a {APP_NAME}</DialogTitle>
           <DialogDescription>
             Pregunta en el oficio que necesites. El historial guarda lo que buscaste. Las interfaces cambian solo la cara, no las
             herramientas.

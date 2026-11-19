@@ -1,15 +1,10 @@
 import type { Metadata } from "next";
-import { Fraunces, JetBrains_Mono, Manrope } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { APP_DESCRIPTION, APP_NAME } from "@/lib/brand";
 import "./globals.css";
 
-const display = Fraunces({
-  subsets: ["latin"],
-  variable: "--font-display",
-  style: ["normal", "italic"],
-});
-
-const body = Manrope({
+const sans = Inter({
   subsets: ["latin"],
   variable: "--font-body",
 });
@@ -21,9 +16,12 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Taller",
-  description: "Ocho oficios de estudio y trabajo, con el formato de conversación que publicó DeepSeek.",
-  applicationName: "Taller",
+  title: APP_NAME,
+  description: APP_DESCRIPTION,
+  applicationName: APP_NAME,
+  icons: {
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -31,9 +29,17 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="es"
       data-skin="brisa"
-      className={`${display.variable} ${body.variable} ${mono.variable} h-full antialiased`}
+      suppressHydrationWarning
+      className={`${sans.variable} ${mono.variable} h-full antialiased`}
     >
-      <body className="min-h-full text-foreground">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("lumen-theme");var d=window.matchMedia("(prefers-color-scheme: dark)").matches;var dark=t==="dark"||(!t&&d);if(dark)document.documentElement.classList.add("dark");}catch(e){}})();`,
+          }}
+        />
+      </head>
+      <body className="min-h-full bg-background font-sans text-foreground">
         <TooltipProvider>{children}</TooltipProvider>
       </body>
     </html>

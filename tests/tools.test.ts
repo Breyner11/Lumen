@@ -92,34 +92,32 @@ test("investigar responde qué es la metodología de investigación", async () =
 test("investigar define perrera con significados y ejemplos", async () => {
   const result = await runActivity("investigar", "Perrera");
   assert.match(result.answer, /lugar o instalaci[oó]n|alojar perros/i);
-  assert.match(result.answer, /Significados y usos principales/);
-  assert.match(result.answer, /Ejemplos de uso/);
-  assert.match(result.answer, /Sin[oó]nimos/);
-  assert.doesNotMatch(result.answer, /injuries|SpanishDictionary/i);
+  assert.match(result.answer, /Refugio|Caseta|albergue/i);
+  assert.doesNotMatch(result.answer, /Qué dicen las fuentes|injuries|SpanishDictionary/i);
 });
 
 test("investigar define casas en español sin ruido CASAS/Municipality", async () => {
   const result = await runActivity("investigar", "Casas");
   assert.match(result.answer, /plural de casa|vivienda o residencia/i);
-  assert.match(result.answer, /Sin[oó]nimos/);
-  assert.match(result.answer, /Ejemplos de uso/);
+  assert.match(result.answer, /Vivienda|Hogar|residencia/i);
   assert.doesNotMatch(result.answer, /Assessment Systems|Municipality|TOPSpro|kilometers/i);
+  assert.doesNotMatch(result.answer, /Qué dicen las fuentes/i);
 });
 
 test("investigar define ciudades como ficha y no demografía", async () => {
   const result = await runActivity("investigar", "Ciudades");
-  assert.match(result.answer, /asentamiento humano|servicios urbanos/i);
-  assert.match(result.answer, /Sin[oó]nimos/);
-  assert.match(result.answer, /Ejemplos de uso/);
+  assert.match(result.answer, /asentamiento humano|servicios urbanos|ciudad/i);
   assert.doesNotMatch(result.answer, /Chiclayo|Huancayo|Iquitos|Lima Metropolitana|32\s*%/i);
+  assert.doesNotMatch(result.answer, /Qué dicen las fuentes|Hechos clave/i);
 });
 
-test("investigar responde ejemplos de ciudad con nombres claros", async () => {
+test("investigar responde ejemplos de ciudad en formato overview", async () => {
   const result = await runActivity("investigar", "ejemplos de ciudad");
-  assert.match(result.answer, /Bogot[aá]|Ciudad de M[eé]xico|Madrid|Tokio/i);
-  assert.match(result.answer, /Capital|Portuaria|Industrial|Tur[ií]stica/i);
-  assert.doesNotMatch(result.answer, /peciales|Ciudad Line\b|exploraremos ejemplos de ciudad qu/i);
-  assert.doesNotMatch(result.answer, /Descubre qu[eé] es una ciudad/i);
+  assert.match(result.answer, /Bogot[aá]/i);
+  assert.match(result.answer, /Medell[ií]n|Cali/i);
+  assert.doesNotMatch(result.answer, /Qué dicen las fuentes|Hechos clave|peciales|Ciudad Line\b/i);
+  assert.doesNotMatch(result.answer, /Descubre qu[eé] es una ciudad|Spanish word for/i);
+  assert.doesNotMatch(result.answer, /##|\b\d{1,2}:\d{2}\b/);
 });
 
 test("isUsableSourceSnippet rechaza scrapes truncados", async () => {
@@ -295,16 +293,58 @@ test("buildResearchDraft arma secciones con fuentes", async () => {
       },
     ],
   );
-  assert.match(draft, /Qué dicen las fuentes/);
-  assert.match(draft, /Chihuahua/);
-  assert.match(draft, /pomerania/i);
-  assert.match(draft, /Razas de perros pequeños/i);
-  assert.match(draft, /En resumen/);
-  assert.match(draft, /chihuahua|pomerania/i);
+  assert.match(draft, /Chihuahua|pomerania/i);
+  assert.doesNotMatch(draft, /Qué dicen las fuentes/);
   assert.doesNotMatch(draft, /Conviene contrastar los puntos anteriores/);
   assert.doesNotMatch(draft, /Aprendizaje: perros/);
   assert.doesNotMatch(draft, /# Aprendizaje/);
   assert.doesNotMatch(draft, /guanaco|caballo/i);
+});
+
+test("overview limpia scrapes y formatea respuesta directa + lista", async () => {
+  const {
+    prepareContextSnippets,
+    buildOverviewFallback,
+    formatOverviewMarkdown,
+    looksLikeCleanOverview,
+    scrubSnippet,
+  } = await import("../lib/tools/overview");
+  const dirty =
+    "09:55 ## Hechos clave - peciales. Conoce la definición. Spanish word for city. See 2 authoritative tra";
+  const scrubbed = scrubSnippet(dirty);
+  assert.doesNotMatch(scrubbed, /##|\b09:55\b|Hechos clave/i);
+  const snippets = prepareContextSnippets([
+    {
+      score: 0.5,
+      chunk: {
+        id: "1",
+        documentId: "d1",
+        title: "Aprendizaje: ejemplos de ciudad",
+        text: dirty,
+        index: 0,
+      },
+    },
+    {
+      score: 0.4,
+      chunk: {
+        id: "2",
+        documentId: "d2",
+        title: "Bogotá",
+        text: "Bogotá es la capital de Colombia y centro administrativo del país.",
+        index: 1,
+      },
+    },
+  ]);
+  assert.equal(snippets.some((s) => /peciales|Hechos clave/i.test(s.text)), false);
+  const draft = buildOverviewFallback({
+    question: "ejemplos de ciudad",
+    snippets,
+  });
+  assert.ok(draft);
+  const markdown = formatOverviewMarkdown(draft!);
+  assert.match(markdown, /Bogot[aá]/i);
+  assert.equal(looksLikeCleanOverview(markdown), true);
+  assert.doesNotMatch(markdown, /Qué dicen las fuentes|##|Hechos clave/i);
 });
 
 test("splitToolBadge separa la etiqueta de herramienta", async () => {

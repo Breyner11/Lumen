@@ -72,7 +72,7 @@ export async function polishAnswer(options: {
     numPredict,
     numCtx: 1536,
     system: [
-      "Eres Taller, un asistente todoterreno.",
+      "Eres Lumen, un asistente todoterreno.",
       "Responde SIEMPRE en español natural y correcto.",
       lengthRule,
       "Usa solo hechos de las notas internas. Si faltan datos, dilo; no inventes nombres, cifras ni listas ficticias.",
