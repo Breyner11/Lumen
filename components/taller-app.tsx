@@ -78,15 +78,6 @@ const SPECIALTY_ACTIVITIES = ACTIVITIES.filter((item) =>
 
 type Threads = Partial<Record<ActivityId, StoredMessage[]>>;
 type Status = "loading" | "taller" | "model";
-type RagStatus = {
-  engine: boolean;
-  ollama: boolean;
-  embedModel: string;
-  search: string;
-  visionModel?: string | null;
-  sympy?: boolean;
-  mathModel?: string | null;
-};
 
 export function TallerApp() {
   const [activity, setActivity] = useState<ActivityId>("preguntar");
@@ -102,7 +93,6 @@ export function TallerApp() {
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState<Status>("loading");
-  const [ragStatus, setRagStatus] = useState<RagStatus | null>(null);
   const [activitiesOpen, setActivitiesOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -157,13 +147,6 @@ export function TallerApp() {
         setStatus(body.modelReady ? "model" : "taller");
       })
       .catch(() => setStatus("taller"));
-    void fetch("/api/rag/status")
-      .then(async (response) => {
-        if (!response.ok) return;
-        const body = (await response.json()) as RagStatus;
-        setRagStatus(body);
-      })
-      .catch(() => setRagStatus(null));
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -864,15 +847,6 @@ export function TallerApp() {
           </Button>
         </div>
 
-        {status === "taller" && (
-          <p className="mx-3 mt-2 rounded-xl bg-accent/70 px-3 py-2 text-sm text-accent-foreground md:mx-0 md:mr-3">
-            Modo taller + RAG: DuckDuckGo, documentos
-            {ragStatus?.engine ? ", SymPy" : ""}
-            {ragStatus?.visionModel ? ` y visión (${ragStatus.visionModel})` : ragStatus?.engine ? " (visión con Ollama si instalas qwen2.5-vl)" : ""}
-            . En Calcular puedes subir una foto de una fórmula.
-            {lessons.length > 0 ? ` Lleva ${lessons.length} corrección${lessons.length === 1 ? "" : "es"}.` : ""}
-          </p>
-        )}
         {learnNote && (
           <p className="mx-3 mt-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-sm md:mx-0 md:mr-3" role="status">
             {learnNote}
