@@ -1,6 +1,6 @@
 /** Cliente Ollama: chat con deepseek-r1:1.5b, RAM ~8 GB. */
 
-export const OLLAMA_CHAT_TIMEOUT_MS = 180_000;
+export const OLLAMA_CHAT_TIMEOUT_MS = 75_000;
 export const OLLAMA_CHAT_KEEP_ALIVE = "5m";
 
 export function ollamaUrl(): string {
@@ -15,11 +15,11 @@ export const OLLAMA_CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL?.trim() || "deeps
 export const OLLAMA_VISION_MODEL = process.env.OLLAMA_VISION_MODEL?.trim() || "qwen2.5vl:3b";
 export const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL?.trim() || "nomic-embed-text";
 
-/** Opciones base: equilibrio entre detalle y tiempo de respuesta. */
+/** Opciones base: prioriza respuestas más rápidas en ~8 GB RAM. */
 export const OLLAMA_OPTIONS = {
-  num_ctx: 3072,
+  num_ctx: 2048,
   num_thread: 4,
-  num_predict: 700,
+  num_predict: 380,
 } as const;
 
 export function withOllamaLimits<T extends Record<string, unknown>>(
@@ -73,17 +73,25 @@ export function modelIsInstalled(models: string[], wanted: string): boolean {
   });
 }
 
-export async function ensureChatModel(signal?: AbortSignal): Promise<{
+type EnsureResult = {
   ok: boolean;
   model: string;
   models: string[];
   error?: string;
-}> {
+};
+
+let ensureCache: { at: number; result: EnsureResult } | null = null;
+const ENSURE_TTL_MS = 45_000;
+
+export async function ensureChatModel(signal?: AbortSignal): Promise<EnsureResult> {
   const model = OLLAMA_CHAT_MODEL;
   const url = ollamaUrl();
+  if (ensureCache && Date.now() - ensureCache.at < ENSURE_TTL_MS && ensureCache.result.ok) {
+    return ensureCache.result;
+  }
   try {
     const response = await fetch(`${url}/api/tags`, {
-      signal: signal ?? AbortSignal.timeout(5_000),
+      signal: signal ?? AbortSignal.timeout(3_000),
       cache: "no-store",
     });
     if (!response.ok) {
@@ -109,7 +117,9 @@ export async function ensureChatModel(signal?: AbortSignal): Promise<{
         ].join(" "),
       };
     }
-    return { ok: true, model, models };
+    const result = { ok: true as const, model, models };
+    ensureCache = { at: Date.now(), result };
+    return result;
   } catch (caught) {
     const detail = caught instanceof Error ? caught.message : String(caught);
     return {

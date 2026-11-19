@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { ExternalLink, Link2, X } from "lucide-react";
 import { stripCitationBlocks } from "@/lib/rag/citations";
+import { sanitizeBrokenMarkdown } from "@/lib/style-rewrite";
 import { splitToolBadge } from "@/lib/tool-badge";
 
 export function MarkdownView({
@@ -15,7 +16,7 @@ export function MarkdownView({
   sources?: Array<{ title: string; url: string }>;
 }) {
   const withoutTool = splitToolBadge(text).content;
-  const { thinking, content: afterThink } = splitThinking(withoutTool);
+  const { thinking, content: afterThink } = splitThinking(sanitizeBrokenMarkdown(withoutTool));
   const stripped = stripCitationBlocks(afterThink);
   const content = stripped.content;
   const images = imagesProp?.length ? imagesProp : stripped.images;

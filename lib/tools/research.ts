@@ -3,7 +3,7 @@ import { runRagPipeline } from "@/lib/rag/pipeline";
 import type { RagDocument, RagHit } from "@/lib/rag/types";
 import type { Lesson } from "@/lib/lessons";
 import { detectAnswerStyle } from "@/lib/style";
-import { polishAnswer } from "@/lib/tools/polish";
+import { rewriteAnswerStyle } from "@/lib/style-rewrite";
 import type { ChatTurn } from "@/lib/types";
 
 type ToolResult = {
@@ -89,27 +89,15 @@ export async function researchBrief(
   }
 
   const style = detectAnswerStyle(options?.messages ?? []);
-  const researchStyle = style === "corto" || style === "natural" ? style : "informativo";
-
-  const polished = await polishAnswer({
-    question,
-    context: draft,
-    messages: options?.messages,
-    style: researchStyle,
-    images: rag.images,
-    sources,
-    mode: "research",
-  });
-
-  // El 1.5B suele acortar o rellenar; preferimos el borrador anclado a hits si el polish no aporta.
-  const answer = chooseResearchAnswer(polished.text, draft, researchStyle, polished.ok);
+  // Borrador anclado a fuentes (sin pasar por R1: más rápido y sin alucinaciones).
+  const answer =
+    style === "corto" || style === "natural" ? rewriteAnswerStyle(draft, style) : draft;
 
   return {
     applicable: true,
     answer,
-    thinking: polished.thinking,
-    images: polished.images,
-    sources: polished.sources,
+    images: rag.images,
+    sources,
     notes: "",
   };
 }

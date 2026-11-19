@@ -53,31 +53,31 @@ export async function polishAnswer(options: {
     };
   }
 
-  const maxChars = mode === "research" ? 3200 : style === "corto" ? 1400 : 2400;
-  const numPredict = style === "corto" ? 280 : mode === "research" || style === "informativo" ? 900 : 650;
+  const maxChars = mode === "research" ? 2200 : style === "corto" ? 1000 : 1600;
+  const numPredict = style === "corto" ? 180 : mode === "research" || style === "informativo" ? 420 : 320;
   const internal = stripRawContextMarkers(seed).slice(0, maxChars);
 
   const lengthRule =
     style === "corto"
-      ? "Sé breve: 2–5 viñetas o hasta ~100 palabras."
+      ? "Sé breve: 2–5 viñetas o hasta ~80 palabras."
       : mode === "research" || style === "informativo"
-        ? "Sé informativo: 3–6 subtítulos o secciones, con párrafos cortos y viñetas. Entre 250 y 450 palabras si el material lo permite."
-        : "Respuesta clara y útil: 150–280 palabras, con subtítulos o viñetas si ayudan.";
+        ? "Sé informativo pero compacto: 2–4 subtítulos y viñetas. Máximo ~220 palabras."
+        : "Respuesta clara y útil: 80–160 palabras, con subtítulos o viñetas si ayudan.";
 
   const drafted = await ollamaChat({
     languageMode: "spanish",
     keepAlive: "5m",
-    timeoutMs: 180_000,
+    timeoutMs: 60_000,
     think: false,
     numPredict,
-    numCtx: mode === "research" ? 3072 : 2048,
+    numCtx: 1536,
     system: [
       "Eres Taller, un asistente todoterreno.",
       "Responde SIEMPRE en español natural y correcto.",
       lengthRule,
-      "Usa solo hechos de las notas internas. Si faltan datos, dilo; no inventes razas, cifras ni listas ficticias.",
+      "Usa solo hechos de las notas internas. Si faltan datos, dilo; no inventes nombres, cifras ni listas ficticias.",
+      "Markdown limpio: **subtítulo** sin espacios raros dentro de los asteriscos.",
       "No copies encabezados de recuperación ni bloques [1] [2].",
-      "Estructura con **subtítulos** y viñetas cuando aporte claridad.",
       styleInstruction(style),
     ].join("\n"),
     prompt: [

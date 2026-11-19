@@ -10,6 +10,7 @@ import { runRagPipeline } from "@/lib/rag/pipeline";
 import type { RagDocument } from "@/lib/rag/types";
 import { renderRecipePrompt } from "@/lib/recipe-prompt";
 import { detectAnswerStyle, isStyleRewriteRequest } from "@/lib/style";
+import { rewriteAnswerStyle } from "@/lib/style-rewrite";
 import { handleDailyLife, handleEmergency, handleProject } from "@/lib/tools/everyday";
 import { analyzeAndLearnLink, extractUrls, formatLinkAnswer } from "@/lib/tools/links";
 import { polishAnswer } from "@/lib/tools/polish";
@@ -71,24 +72,16 @@ export async function composeConversation(options: {
   const documents = options.documents ?? [];
   const style = detectAnswerStyle(options.messages);
 
-  // Botones Más corto / Más informativo / Más natural: reescribir la respuesta anterior.
+  // Botones Más corto / Más informativo / Más natural: reescritura local (rápida, sin inventar).
   if (isStyleRewriteRequest(latest)) {
     const previous = lastAssistantText(options.messages);
     const previousClean = stripCitationBlocks(previous);
     if (previousClean.content.trim()) {
-      const polished = await polishAnswer({
-        question: latest,
-        context: previousClean.content,
-        messages: options.messages,
-        style,
+      const rewritten = rewriteAnswerStyle(previousClean.content, style);
+      return wrap(options, "Reescritura de estilo pedida por el usuario.", rewritten, {
+        languageMode: "spanish",
         images: previousClean.images,
         sources: previousClean.sources,
-      });
-      return wrap(options, "Reescritura de estilo pedida por el usuario.", polished.text, {
-        languageMode: "spanish",
-        thinking: polished.thinking,
-        images: polished.images.length ? polished.images : previousClean.images,
-        sources: polished.sources.length ? polished.sources : previousClean.sources,
       });
     }
     return wrap(
