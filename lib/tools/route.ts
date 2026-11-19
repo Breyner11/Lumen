@@ -81,10 +81,12 @@ export function detectIntent(input: string): IntentId {
     return "programar";
   }
 
+  // No confundir "en español" de un pedido de estilo con una traducción.
   if (
-    /\b(traduc(?:e|ir|ción)|translate|to\s+english|al\s+inglés|al\s+español|en\s+inglés|en\s+español)\b/i.test(
+    /\b(traduc(?:e|ir|ción|elo|ela)|translate|to\s+english|al\s+inglés|al\s+español|pasa\s+(?:esto|el\s+texto)\s+a)\b/i.test(
       lower,
-    )
+    ) ||
+    /\b(?:di|dime|pon)\s+(?:esto\s+)?en\s+(?:inglés|español)\b/i.test(lower)
   ) {
     return "traducir";
   }

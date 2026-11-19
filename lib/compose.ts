@@ -9,7 +9,7 @@ import { engineLearnNow, engineRememberLesson } from "@/lib/rag/engine-client";
 import { runRagPipeline } from "@/lib/rag/pipeline";
 import type { RagDocument } from "@/lib/rag/types";
 import { renderRecipePrompt } from "@/lib/recipe-prompt";
-import { detectAnswerStyle } from "@/lib/style";
+import { detectAnswerStyle, isStyleRewriteRequest } from "@/lib/style";
 import { handleDailyLife, handleEmergency, handleProject } from "@/lib/tools/everyday";
 import { analyzeAndLearnLink, extractUrls, formatLinkAnswer } from "@/lib/tools/links";
 import { polishAnswer } from "@/lib/tools/polish";
@@ -34,6 +34,13 @@ export function previousUserText(messages: ChatTurn[]): string {
       continue;
     }
     return messages[index]!.content;
+  }
+  return "";
+}
+
+export function lastAssistantText(messages: ChatTurn[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "assistant") return messages[index]!.content;
   }
   return "";
 }
@@ -63,6 +70,35 @@ export async function composeConversation(options: {
   const lessons = options.lessons ?? [];
   const documents = options.documents ?? [];
   const style = detectAnswerStyle(options.messages);
+
+  // Botones Más corto / Más informativo / Más natural: reescribir la respuesta anterior.
+  if (isStyleRewriteRequest(latest)) {
+    const previous = lastAssistantText(options.messages);
+    const previousClean = stripCitationBlocks(previous);
+    if (previousClean.content.trim()) {
+      const polished = await polishAnswer({
+        question: latest,
+        context: previousClean.content,
+        messages: options.messages,
+        style,
+        images: previousClean.images,
+        sources: previousClean.sources,
+      });
+      return wrap(options, "Reescritura de estilo pedida por el usuario.", polished.text, {
+        languageMode: "spanish",
+        thinking: polished.thinking,
+        images: polished.images.length ? polished.images : previousClean.images,
+        sources: polished.sources.length ? polished.sources : previousClean.sources,
+      });
+    }
+    return wrap(
+      options,
+      "",
+      "No hay una respuesta anterior para reescribir. Haz una pregunta primero y luego usa Más corto / Más informativo / Más natural.",
+      { languageMode: "spanish" },
+    );
+  }
+
   const routedIntent: IntentId | null =
     options.activity === "preguntar" ? detectIntent(latest) : null;
   const languageMode: "spanish" | "translate" =

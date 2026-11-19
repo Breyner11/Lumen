@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { detectAnswerStyle, STYLE_QUICK_PROMPTS, styleInstruction } from "../lib/style";
+import {
+  detectAnswerStyle,
+  isStyleRewriteRequest,
+  STYLE_QUICK_PROMPTS,
+  styleInstruction,
+} from "../lib/style";
 
 test("detecta estilos desde el historial reciente", () => {
   assert.equal(detectAnswerStyle([{ role: "user", content: "hazlo más corto" }]), "corto");
@@ -19,4 +24,11 @@ test("instrucciones y botones rápidos en español", () => {
   assert.match(STYLE_QUICK_PROMPTS.corto, /corta/);
   assert.match(STYLE_QUICK_PROMPTS.informativo, /informativa/);
   assert.match(STYLE_QUICK_PROMPTS.natural, /natural/);
+});
+
+test("reconoce reescritura de estilo de la respuesta anterior", () => {
+  assert.equal(isStyleRewriteRequest(STYLE_QUICK_PROMPTS.informativo), true);
+  assert.equal(isStyleRewriteRequest(STYLE_QUICK_PROMPTS.corto), true);
+  assert.equal(isStyleRewriteRequest(STYLE_QUICK_PROMPTS.natural), true);
+  assert.equal(isStyleRewriteRequest("Traduce al inglés: Hola"), false);
 });

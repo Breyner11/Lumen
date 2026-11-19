@@ -25,6 +25,21 @@ test("detecta traducir y programar", () => {
   );
 });
 
+test("no confunde pedidos de estilo con traducir", () => {
+  assert.notEqual(
+    detectIntent("Haz la respuesta anterior más informativa y detallada, en español, bien estructurada."),
+    "traducir",
+  );
+  assert.notEqual(
+    detectIntent("Haz la respuesta anterior más corta, en español, sin perder lo esencial."),
+    "traducir",
+  );
+  assert.notEqual(
+    detectIntent("Reescribe la respuesta anterior con un tono más natural y cercano, en español."),
+    "traducir",
+  );
+});
+
 test("preguntar enruta una cuenta y marca la herramienta", async () => {
   const result = await runActivity("preguntar", "¿Cuánto es el 15% de 240?");
   assert.equal(result.routedTo, "calcular");

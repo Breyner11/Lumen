@@ -3,13 +3,19 @@ import type { ChatTurn } from "@/lib/types";
 export type AnswerStyle = "corto" | "informativo" | "natural" | "default";
 
 const STYLE_HINTS: Array<{ style: AnswerStyle; match: RegExp }> = [
-  { style: "corto", match: /\bm[aá]s\s+corto|resum(?:e|ido)|en\s+pocas\s+palabras|breve|concis/i },
+  { style: "corto", match: /\bm[aá]s\s+cort[oa]|resum(?:e|ido)|en\s+pocas\s+palabras|breve|concis/i },
   {
     style: "informativo",
     match: /\bm[aá]s\s+(?:largo|informativ|detallad|completo)|explica\s+m[aá]s|profundiz/i,
   },
   { style: "natural", match: /\bm[aá]s\s+natural|tono\s+cercano|como\s+si\s+hablaras|menos\s+formal/i },
 ];
+
+export const STYLE_QUICK_PROMPTS: Record<"corto" | "informativo" | "natural", string> = {
+  corto: "Haz la respuesta anterior más corta, en español, sin perder lo esencial.",
+  informativo: "Haz la respuesta anterior más informativa y detallada, en español, bien estructurada.",
+  natural: "Reescribe la respuesta anterior con un tono más natural y cercano, en español.",
+};
 
 export function detectAnswerStyle(messages: ChatTurn[]): AnswerStyle {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -24,6 +30,20 @@ export function detectAnswerStyle(messages: ChatTurn[]): AnswerStyle {
   return "default";
 }
 
+/** Petición de reescribir la respuesta anterior (botones Más corto/informativo/natural). */
+export function isStyleRewriteRequest(input: string): boolean {
+  const text = input.trim();
+  if (!text) return false;
+  const style = detectAnswerStyle([{ role: "user", content: text }]);
+  if (style === "default") return false;
+  return (
+    /\brespuesta\s+anterior\b/i.test(text) ||
+    /\breescribe\s+la\s+respuesta\b/i.test(text) ||
+    /\bhaz\s+la\s+respuesta\b/i.test(text) ||
+    Object.values(STYLE_QUICK_PROMPTS).some((prompt) => prompt === text)
+  );
+}
+
 export function styleInstruction(style: AnswerStyle): string {
   switch (style) {
     case "corto":
@@ -36,9 +56,3 @@ export function styleInstruction(style: AnswerStyle): string {
       return "Estilo: claro, estructurado y práctico. Usa subtítulos en negrita, viñetas y párrafos cortos.";
   }
 }
-
-export const STYLE_QUICK_PROMPTS: Record<"corto" | "informativo" | "natural", string> = {
-  corto: "Haz la respuesta anterior más corta, en español, sin perder lo esencial.",
-  informativo: "Haz la respuesta anterior más informativa y detallada, en español, bien estructurada.",
-  natural: "Reescribe la respuesta anterior con un tono más natural y cercano, en español.",
-};
