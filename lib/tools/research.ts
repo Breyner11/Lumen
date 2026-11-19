@@ -238,13 +238,30 @@ export function buildResearchDraft(
 
   if (!useful.length) return "";
 
-  sections.push(
-    "**En resumen**",
-    "",
-    "Conviene contrastar los puntos anteriores con las fuentes enlazadas al final.",
-  );
+  const summary = summarizeSourceSnippets(useful);
+  sections.push("**En resumen**", "", summary);
 
   return sections.join("\n");
+}
+
+/** Resume en 2–3 puntos concretos lo que aportan las fuentes (nunca un placeholder). */
+export function summarizeSourceSnippets(items: Array<{ title: string; text: string }>): string {
+  const points: string[] = [];
+  for (const item of items) {
+    const sentence =
+      splitUsefulSentences(item.text).find((part) => part.length >= 40) ||
+      item.text.trim();
+    if (!sentence || sentence.length < 28) continue;
+    if (/conviene contrastar|fuentes enlazadas/i.test(sentence)) continue;
+    const clipped = sentence.length > 160 ? `${sentence.slice(0, 157).trim()}…` : sentence;
+    const label = item.title && item.title !== "Fuente" ? `**${item.title}:** ` : "";
+    points.push(`- ${label}${clipped}`);
+    if (points.length >= 3) break;
+  }
+  if (!points.length) {
+    return "Las fuentes recuperadas no aportaron frases claras; conviene reformular la pregunta.";
+  }
+  return points.join("\n");
 }
 
 /** Descarta scrapes truncados, marketing vacío o cortes a mitad de frase. */
@@ -256,7 +273,7 @@ export function isUsableSourceSnippet(text: string): boolean {
   if (isTruncatedSentence(clean)) return false;
   if (isEnglishHeavy(clean)) return false;
   if (
-    /\b(en este art[ií]culo|exploraremos|descubre qu[eé]|haz clic|leer m[aá]s|sigue leyendo)\b/i.test(
+    /\b(en este art[ií]culo|exploraremos|descubre qu[eé]|haz clic|leer m[aá]s|sigue leyendo|invit[aá]ndote|gemas ocultas|han dejado huella|caracter[ií]sticas esenciales y ejemplos)\b/i.test(
       clean,
     )
   ) {

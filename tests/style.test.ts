@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   detectAnswerStyle,
+  isPreviousSummaryRequest,
   isStyleRewriteRequest,
   STYLE_QUICK_PROMPTS,
   styleInstruction,
@@ -31,6 +32,15 @@ test("reconoce reescritura de estilo de la respuesta anterior", () => {
   assert.equal(isStyleRewriteRequest(STYLE_QUICK_PROMPTS.corto), true);
   assert.equal(isStyleRewriteRequest(STYLE_QUICK_PROMPTS.natural), true);
   assert.equal(isStyleRewriteRequest("Traduce al inglés: Hola"), false);
+  assert.equal(isStyleRewriteRequest("pido un resumen"), true);
+});
+
+test("detecta pedidos de resumen de la respuesta anterior", () => {
+  assert.equal(isPreviousSummaryRequest("pido un resumen"), true);
+  assert.equal(isPreviousSummaryRequest("dame un resumen"), true);
+  assert.equal(isPreviousSummaryRequest("resume lo anterior"), true);
+  assert.equal(isPreviousSummaryRequest("resumen de la segunda guerra mundial"), false);
+  assert.equal(isPreviousSummaryRequest("¿qué es una hipótesis?"), false);
 });
 
 test("rewriteAnswerStyle no inventa temas y limpia markdown roto", async () => {

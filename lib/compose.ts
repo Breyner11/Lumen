@@ -9,7 +9,7 @@ import { engineLearnNow, engineRememberLesson } from "@/lib/rag/engine-client";
 import { runRagPipeline } from "@/lib/rag/pipeline";
 import type { RagDocument } from "@/lib/rag/types";
 import { renderRecipePrompt } from "@/lib/recipe-prompt";
-import { detectAnswerStyle, isStyleRewriteRequest } from "@/lib/style";
+import { detectAnswerStyle, isPreviousSummaryRequest, isStyleRewriteRequest } from "@/lib/style";
 import { rewriteAnswerStyle } from "@/lib/style-rewrite";
 import { handleDailyLife, handleEmergency, handleProject } from "@/lib/tools/everyday";
 import { analyzeAndLearnLink, extractUrls, formatLinkAnswer } from "@/lib/tools/links";
@@ -72,22 +72,28 @@ export async function composeConversation(options: {
   const documents = options.documents ?? [];
   const style = detectAnswerStyle(options.messages);
 
-  // Botones Más corto / Más informativo / Más natural: reescritura local (rápida, sin inventar).
+  // Botones Más corto / Más informativo / Más natural, o «pido un resumen» de lo anterior.
   if (isStyleRewriteRequest(latest)) {
     const previous = lastAssistantText(options.messages);
     const previousClean = stripCitationBlocks(previous);
     if (previousClean.content.trim()) {
-      const rewritten = rewriteAnswerStyle(previousClean.content, style);
+      const rewriteStyle = isPreviousSummaryRequest(latest)
+        ? "corto"
+        : style === "default"
+          ? "corto"
+          : style;
+      const rewritten = rewriteAnswerStyle(previousClean.content, rewriteStyle);
       return wrap(options, "Reescritura de estilo pedida por el usuario.", rewritten, {
         languageMode: "spanish",
         images: previousClean.images,
         sources: previousClean.sources,
+        badge: isPreviousSummaryRequest(latest) ? "Resumir" : undefined,
       });
     }
     return wrap(
       options,
       "",
-      "No hay una respuesta anterior para reescribir. Haz una pregunta primero y luego usa Más corto / Más informativo / Más natural.",
+      "No hay una respuesta anterior para resumir. Haz una pregunta primero y luego pide el resumen.",
       { languageMode: "spanish" },
     );
   }

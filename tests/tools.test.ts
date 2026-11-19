@@ -299,6 +299,9 @@ test("buildResearchDraft arma secciones con fuentes", async () => {
   assert.match(draft, /Chihuahua/);
   assert.match(draft, /pomerania/i);
   assert.match(draft, /Razas de perros pequeños/i);
+  assert.match(draft, /En resumen/);
+  assert.match(draft, /chihuahua|pomerania/i);
+  assert.doesNotMatch(draft, /Conviene contrastar los puntos anteriores/);
   assert.doesNotMatch(draft, /Aprendizaje: perros/);
   assert.doesNotMatch(draft, /# Aprendizaje/);
   assert.doesNotMatch(draft, /guanaco|caballo/i);

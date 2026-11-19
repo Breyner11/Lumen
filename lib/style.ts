@@ -3,7 +3,10 @@ import type { ChatTurn } from "@/lib/types";
 export type AnswerStyle = "corto" | "informativo" | "natural" | "default";
 
 const STYLE_HINTS: Array<{ style: AnswerStyle; match: RegExp }> = [
-  { style: "corto", match: /\bm[aá]s\s+cort[oa]|resum(?:e|ido)|en\s+pocas\s+palabras|breve|concis/i },
+  {
+    style: "corto",
+    match: /\bm[aá]s\s+cort[oa]|resum(?:e|en|ido)|en\s+pocas\s+palabras|breve|concis/i,
+  },
   {
     style: "informativo",
     match: /\bm[aá]s\s+(?:largo|informativ|detallad|completo)|explica\s+m[aá]s|profundiz/i,
@@ -34,6 +37,7 @@ export function detectAnswerStyle(messages: ChatTurn[]): AnswerStyle {
 export function isStyleRewriteRequest(input: string): boolean {
   const text = input.trim();
   if (!text) return false;
+  if (isPreviousSummaryRequest(text)) return true;
   const style = detectAnswerStyle([{ role: "user", content: text }]);
   if (style === "default") return false;
   return (
@@ -41,6 +45,30 @@ export function isStyleRewriteRequest(input: string): boolean {
     /\breescribe\s+la\s+respuesta\b/i.test(text) ||
     /\bhaz\s+la\s+respuesta\b/i.test(text) ||
     Object.values(STYLE_QUICK_PROMPTS).some((prompt) => prompt === text)
+  );
+}
+
+/**
+ * Pedidos cortos tipo «pido un resumen» / «resume lo anterior»
+ * (sin pegar un texto largo ni pedir «resumen de un tema»).
+ */
+export function isPreviousSummaryRequest(input: string): boolean {
+  const text = input.trim();
+  if (!text || text.length > 100) return false;
+  if (/\n/.test(text)) return false;
+  if (
+    /\bresumen\s+de\s+/i.test(text) &&
+    !/\bresumen\s+de\s+(esto|eso|lo\s+anterior|la\s+respuesta)\b/i.test(text)
+  ) {
+    return false;
+  }
+  return (
+    /^(?:(?:por\s+favor|pf)\s+)?(?:(?:me\s+)?(?:puedes|podr[ií]as)\s+)?(?:(?:dame|pido|pide|haz|quiero|necesito)\s+)?(?:un\s+|el\s+)?resumen(?:\s+(?:corto|por\s+favor|de\s+(?:esto|eso|lo\s+anterior|la\s+respuesta)))?\s*[.!?¡¿]*$/i.test(
+      text,
+    ) ||
+    /^(?:resum[ei]|sintetiza)(?:\s+(?:esto|eso|lo\s+anterior|la\s+respuesta(?:\s+anterior)?))?\s*[.!?¡¿]*$/i.test(
+      text,
+    )
   );
 }
 
