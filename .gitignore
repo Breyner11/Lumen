@@ -44,3 +44,6 @@ next-env.d.ts
 /services/rag-engine/data/
 __pycache__/
 *.pyc
+
+out-desktop/
+src-tauri/target/

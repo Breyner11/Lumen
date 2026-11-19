@@ -8,9 +8,13 @@
     "start": "next start --hostname 127.0.0.1 --port 3847",
     "lint": "eslint",
     "test": "tsx --test tests/**/*.test.ts",
+    "lumen:standalone": "node scripts/prepare-desktop-standalone.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "rag:install": "python3 -m pip install --user -r services/rag-engine/requirements.txt",
     "rag:engine": "python3 services/rag-engine/app.py",
-    "rag:ollama": "ollama pull nomic-embed-text && ollama pull qwen2.5vl:3b && ollama pull deepseek-r1:1.5b"
+    "rag:ollama": "ollama pull nomic-embed-text && ollama pull qwen2.5vl:3b && ollama pull deepseek-r1:1.5b && ollama pull qwen2.5:7b"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

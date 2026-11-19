@@ -1,17 +1,22 @@
 import { sourcesFromHits, type CitationImage, type CitationSource } from "@/lib/rag/citations";
+import { engineSearch } from "@/lib/rag/engine-client";
 import { runRagPipeline } from "@/lib/rag/pipeline";
 import type { RagDocument, RagHit } from "@/lib/rag/types";
 import type { Lesson } from "@/lib/lessons";
 import { detectAnswerStyle } from "@/lib/style";
 import { rewriteAnswerStyle } from "@/lib/style-rewrite";
 import {
+  appendOfflineFooter,
   buildOverviewFallback,
   cleanCitationSources,
   formatOverviewMarkdown,
   prepareContextSnippets,
   redactOverviewAnswer,
+  redactOverviewFromKnowledge,
 } from "@/lib/tools/overview";
 import type { ChatTurn } from "@/lib/types";
+
+export type WebSearchMode = boolean | "auto";
 
 type ToolResult = {
   applicable: boolean;
@@ -20,7 +25,16 @@ type ToolResult = {
   thinking?: string;
   images: CitationImage[];
   sources: CitationSource[];
+  usedWeb?: boolean;
+  offline?: boolean;
 };
+
+/** Preguntas que suelen necesitar dato fresco de internet. */
+export function looksLikeFreshWebQuery(question: string): boolean {
+  return /\b(hoy|ahora|esta\s+semana|precio\s+actual|noticias?|últimas?\s+noticias|en\s+vivo|resultado\s+del\s+partido|cotizaci[oó]n)\b/i.test(
+    question,
+  );
+}
 
 const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
   {
@@ -119,13 +133,21 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
 
 export async function researchBrief(
   input: string,
-  options?: { documents?: RagDocument[]; lessons?: Lesson[]; messages?: ChatTurn[] },
+  options?: {
+    documents?: RagDocument[];
+    lessons?: Lesson[];
+    messages?: ChatTurn[];
+    /** false = solo local/modelo; true = web; "auto" = web si hace falta. Por defecto false. */
+    webSearch?: WebSearchMode;
+    /** Modelo Ollama de chat (p. ej. qwen2.5:7b). */
+    ollamaModel?: string;
+  },
 ): Promise<ToolResult> {
   const question = input.trim().replace(/\s+/g, " ");
   if (question.length < 3) {
     return {
       applicable: false,
-      answer: "Escribe la pregunta para investigarla con fuentes y memoria local.",
+      answer: "Escribe la pregunta para investigarla con memoria local o tu modelo.",
       notes: "",
       images: [],
       sources: [],
@@ -134,69 +156,246 @@ export async function researchBrief(
 
   const lower = question.toLowerCase();
   const known = KNOWN.find((item) => item.match.test(lower));
+  const webMode: WebSearchMode = options?.webSearch ?? false;
+  const wantWeb =
+    webMode === true || (webMode === "auto" && looksLikeFreshWebQuery(question));
+  const model = options?.ollamaModel;
+
+  // 1) Documentos / lecciones locales (sin web).
   const rag = await runRagPipeline({
     query: question,
     activity: "investigar",
     documents: options?.documents,
     lessons: options?.lessons,
-    includeLiveSources: true,
+    includeLiveSources: false,
   });
 
-  const rawSources =
-    rag.sources.length > 0
-      ? rag.sources
-      : sourcesFromHits(
-          rag.hits.map((hit) => ({
-            title: hit.chunk.title,
-            source: hit.chunk.source,
-          })),
-        );
-  const sources = cleanCitationSources(rawSources);
-  const snippets = prepareContextSnippets(rag.hits);
-  const images = rag.images.slice(0, 3);
+  let hits = rag.hits;
+  if (!wantWeb && !(options?.documents?.length)) {
+    // Sin web y sin docs del usuario: evita contaminar con restos de aprendizaje web.
+    hits = rag.hits.filter((hit) => {
+      const blob = `${hit.chunk.source || ""} ${hit.chunk.title || ""}`;
+      return !/^https?:\/\//i.test(hit.chunk.source || "") && !/Aprendizaje\s*web/i.test(blob);
+    });
+  }
+  let snippets = prepareContextSnippets(hits, question);
+  if (!wantWeb) {
+    snippets = snippets.filter(
+      (snippet) => !snippet.url || Boolean(options?.documents?.length),
+    );
+  }
 
-  const redacted = await redactOverviewAnswer({
-    question,
-    snippets,
-    known,
-    images,
-    timeoutMs: 28_000,
-  });
+  let sources: CitationSource[] = [];
+  let images = rag.images.slice(0, 3);
+  let usedWeb = false;
 
-  const overview =
-    redacted.draft ||
-    buildOverviewFallback({ question, snippets, known, images }) ||
-    null;
-
-  if (!overview) {
-    return {
-      applicable: false,
-      answer: [
-        "No encontré información confiable para responder con seguridad.",
-        "",
-        "Prueba a reformular o carga un documento en el botón +.",
-      ].join("\n"),
-      notes: "",
+  // 2) Si hay contexto local útil o ficha known → overview con ese contexto.
+  if (known || snippets.length >= 1) {
+    const localSources = cleanCitationSources(
+      sourcesFromHits(
+        hits.map((hit) => ({
+          title: hit.chunk.title,
+          source: hit.chunk.source,
+        })),
+      ).filter((s) => !s.url?.startsWith("http") || Boolean(options?.documents?.length)),
+    );
+    const redacted = await redactOverviewAnswer({
+      question,
+      snippets,
+      known,
       images: [],
-      sources,
+      timeoutMs: 60_000,
+      model,
+    });
+    const overview =
+      redacted.draft ||
+      buildOverviewFallback({ question, snippets, known, images: [] }) ||
+      null;
+    if (overview && (overview.items.length >= 2 || Boolean(known))) {
+      let answer = formatOverviewMarkdown(overview);
+      const style = detectAnswerStyle(options?.messages ?? []);
+      if (style === "corto" || style === "natural") answer = rewriteAnswerStyle(answer, style);
+      if (!wantWeb) {
+        answer = appendOfflineFooter(answer, {
+          confidence: known
+            ? "Ficha local confiable."
+            : redacted.ok
+              ? "Basado en documentos locales o conocimiento del modelo."
+              : "Redacción de respaldo a partir de contexto local.",
+        });
+      }
+      return {
+        applicable: true,
+        answer,
+        images: [],
+        sources: localSources,
+        notes: "",
+        thinking: redacted.ok ? undefined : redacted.error,
+        usedWeb: false,
+        offline: !wantWeb,
+      };
+    }
+  }
+
+  // 3) Offline-first: conocimiento propio del modelo (sin inventar fuentes).
+  if (!wantWeb) {
+    const fromModel = await redactOverviewFromKnowledge({
+      question,
+      known,
+      model,
+      timeoutMs: 90_000,
+    });
+    if (fromModel.draft && fromModel.draft.items.length >= 2) {
+      let answer = formatOverviewMarkdown(fromModel.draft);
+      const style = detectAnswerStyle(options?.messages ?? []);
+      if (style === "corto" || style === "natural") answer = rewriteAnswerStyle(answer, style);
+      answer = appendOfflineFooter(answer, {
+        confidence: fromModel.ok
+          ? `Conocimiento del modelo local (${fromModel.model || model || "Ollama"}). Sin fuentes web.`
+          : "Respuesta local sin fuentes web.",
+      });
+      return {
+        applicable: true,
+        answer,
+        images: [],
+        sources: [],
+        notes: "",
+        thinking: fromModel.ok ? undefined : fromModel.error,
+        usedWeb: false,
+        offline: true,
+      };
+    }
+
+    // Auto: si el modelo no pudo y el modo es auto, activar web abajo.
+    if (webMode !== "auto") {
+      return {
+        applicable: false,
+        answer: appendOfflineFooter(
+          [
+            "No pude responder con seguridad solo con el modelo local.",
+            "",
+            "Prueba a activar «Buscar en internet», subir un PDF/DOCX/TXT en Conocimiento, o cambiar el modelo en Ajustes.",
+          ].join("\n"),
+          { confidence: "Sin respuesta confiable offline." },
+        ),
+        notes: "",
+        images: [],
+        sources: [],
+        thinking: fromModel.error,
+        usedWeb: false,
+        offline: true,
+      };
+    }
+  }
+
+  // 4) Web opcional (interruptor o auto tras fallo / dato fresco).
+  const useWeb = wantWeb || webMode === "auto";
+  if (useWeb) {
+    const liveRag = await runRagPipeline({
+      query: question,
+      activity: "investigar",
+      documents: options?.documents,
+      lessons: options?.lessons,
+      includeLiveSources: true,
+    });
+    hits = liveRag.hits;
+    snippets = prepareContextSnippets(hits, question);
+    if (snippets.filter((snippet) => snippet.url).length < 2) {
+      const web = await engineSearch(question, 6);
+      if (web.length) {
+        const webHits: RagHit[] = web.map((item, index) => ({
+          score: 0.55 - index * 0.04,
+          chunk: {
+            id: `live-web-${index}`,
+            documentId: `live-web-${index}`,
+            title: item.title,
+            source: `${item.source || "web"} · ${item.url}`,
+            text: item.snippet || item.title,
+            index,
+          },
+        }));
+        hits = [...webHits, ...hits];
+        snippets = prepareContextSnippets(hits, question);
+        sources = cleanCitationSources([
+          ...web.map((item) => ({ title: item.title, url: item.url })),
+          ...sources,
+        ]);
+        usedWeb = true;
+      }
+    } else {
+      usedWeb = true;
+    }
+    images = liveRag.images.slice(0, 3);
+    const rawSources =
+      liveRag.sources.length > 0
+        ? liveRag.sources
+        : sourcesFromHits(
+            hits.map((hit) => ({
+              title: hit.chunk.title,
+              source: hit.chunk.source,
+            })),
+          );
+    sources = cleanCitationSources([...sources, ...rawSources]);
+
+    const redacted = await redactOverviewAnswer({
+      question,
+      snippets,
+      known,
+      images,
+      timeoutMs: 60_000,
+      model,
+    });
+    const overview =
+      redacted.draft ||
+      buildOverviewFallback({ question, snippets, known, images }) ||
+      null;
+    if (!overview) {
+      return {
+        applicable: false,
+        answer: [
+          "No encontré información confiable para responder con seguridad.",
+          "",
+          "Prueba a reformular o carga un documento en Conocimiento.",
+        ].join("\n"),
+        notes: "",
+        images: [],
+        sources,
+        usedWeb,
+        offline: !usedWeb,
+      };
+    }
+    let answer = formatOverviewMarkdown(overview, {
+      rows: overview.items.some((item) => Boolean(item.imageUrl)),
+    });
+    const style = detectAnswerStyle(options?.messages ?? []);
+    if (style === "corto" || style === "natural") answer = rewriteAnswerStyle(answer, style);
+    if (!usedWeb) {
+      answer = appendOfflineFooter(answer, {
+        confidence: "Sin resultados web útiles; respuesta local.",
+      });
+    }
+    return {
+      applicable: true,
+      answer,
+      images,
+      sources: usedWeb ? sources : [],
+      notes: "",
+      thinking: redacted.ok ? undefined : redacted.error,
+      usedWeb,
+      offline: !usedWeb,
     };
   }
 
-  let answer = formatOverviewMarkdown(overview, {
-    rows: overview.items.some((item) => Boolean(item.imageUrl)),
-  });
-  const style = detectAnswerStyle(options?.messages ?? []);
-  if (style === "corto" || style === "natural") {
-    answer = rewriteAnswerStyle(answer, style);
-  }
-
   return {
-    applicable: true,
-    answer,
-    images,
-    sources,
+    applicable: false,
+    answer: appendOfflineFooter("No encontré información confiable para responder con seguridad.", {
+      confidence: "Sin contexto local ni web.",
+    }),
     notes: "",
-    thinking: redacted.ok ? undefined : redacted.error,
+    images: [],
+    sources: [],
+    usedWeb: false,
+    offline: true,
   };
 }
 
@@ -206,7 +405,7 @@ export function buildResearchDraft(
   hits: RagHit[],
   known?: { title: string; body: string },
 ): string {
-  const snippets = prepareContextSnippets(hits);
+  const snippets = prepareContextSnippets(hits, question);
   const overview = buildOverviewFallback({ question, snippets, known });
   if (overview) return formatOverviewMarkdown(overview);
 

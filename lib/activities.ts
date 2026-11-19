@@ -114,7 +114,7 @@ export const ACTIVITIES: Activity[] = [
     id: "investigar",
     number: "08",
     label: "Investigar",
-    blurb: "RAG sobre tus docs y bases verificables con citas.",
+    blurb: "Responde offline con el modelo local; docs propios opcionales; internet solo si lo activas.",
     placeholder: "La pregunta que quieres investigar…",
     starters: [
       "¿Qué es la metodología de investigación?",
@@ -122,7 +122,7 @@ export const ACTIVITIES: Activity[] = [
       "¿Por qué el agua hierve a menor temperatura en Bogotá que en la costa?",
     ],
     system:
-      "Respondes con claridad y apoyas lo que afirmas en fuentes con enlace (Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC, Open Library). No inventas citas, DOI, cifras ni autores. Si las bases discrepan, lo dices.",
+      "Respondes en formato overview (respuesta directa + lista). Por defecto usas conocimiento local de Ollama y documentos del usuario. No inventas URLs ni fuentes. Si no hay internet, marcas «Respondido sin internet». Solo usas web cuando el usuario lo active.",
   },
 ];
 

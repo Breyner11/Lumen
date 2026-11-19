@@ -128,7 +128,8 @@ function composeStream(request: ChatRequest, signal: AbortSignal): ReadableStrea
         const { OLLAMA_CHAT_MODEL, formatOllamaErrorForUser, ensureChatModel } = await import(
           "@/lib/ollama"
         );
-        const readiness = await ensureChatModel(signal);
+        const preferred = request.ollamaModel?.trim() || OLLAMA_CHAT_MODEL;
+        const readiness = await ensureChatModel(signal, preferred);
         if (!readiness.ok) {
           console.error("[taller/chat] Ollama no listo:", readiness.error);
           safeEnqueue({
@@ -145,13 +146,18 @@ function composeStream(request: ChatRequest, signal: AbortSignal): ReadableStrea
           return;
         }
 
+        const webOff = request.webSearch === false || request.webSearch === undefined;
         safeEnqueue({
           type: "status",
-          text: searching ? "Buscando información…" : "Pensando…",
+          text: searching
+            ? webOff
+              ? "Pensando sin internet…"
+              : "Buscando información…"
+            : "Pensando…",
         });
         const composed = await composeConversation({ ...request, now: new Date() });
         if (signal.aborted) return;
-        emitComposed(controller, composed, OLLAMA_CHAT_MODEL);
+        emitComposed(controller, composed, preferred);
       } catch (caught) {
         if (signal.aborted) return;
         const detail = caught instanceof Error ? caught.message : String(caught);

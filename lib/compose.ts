@@ -66,6 +66,8 @@ export async function composeConversation(options: {
   lessons?: Lesson[];
   documents?: RagDocument[];
   now?: Date;
+  webSearch?: boolean | "auto";
+  ollamaModel?: string;
 }): Promise<ComposeResult> {
   const latest = lastUserText(options.messages);
   const lessons = options.lessons ?? [];
@@ -182,8 +184,10 @@ export async function composeConversation(options: {
       documents,
       lessons,
       messages: options.messages,
+      webSearch: options.webSearch ?? false,
+      ollamaModel: options.ollamaModel,
     });
-    void engineLearnFromQuery(latest);
+    if (tool.usedWeb) void engineLearnFromQuery(latest);
     const body = tool.answer;
     const withBadge =
       routedIntent === "investigar" && !body.includes("Herramienta:")
@@ -203,10 +207,7 @@ export async function composeConversation(options: {
     activity: effectiveActivity,
     documents,
     lessons,
-    includeLiveSources:
-      effectiveActivity === "estudiar" ||
-      effectiveActivity === "investigar" ||
-      options.activity === "preguntar",
+    includeLiveSources: options.webSearch === true,
   });
 
   const tool = await runActivity(options.activity, latest);

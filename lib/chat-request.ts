@@ -1,6 +1,7 @@
 import { MODEL_LABEL } from "@/lib/activities";
 import { composeConversation } from "@/lib/compose";
 import { sanitizeLessons, type Lesson } from "@/lib/lessons";
+import { isOllamaChatModelId, type OllamaChatModelId } from "@/lib/ollama-models";
 import { sanitizeDocuments } from "@/lib/rag/pipeline";
 import type { RagDocument } from "@/lib/rag/types";
 import type { ActivityId, ChatTurn, Effort, ModelId } from "@/lib/types";
@@ -18,6 +19,10 @@ export type ChatRequest = {
   messages: ChatTurn[];
   lessons: Lesson[];
   documents: RagDocument[];
+  /** Interruptor «Buscar en internet». Por defecto false (offline-first). */
+  webSearch?: boolean | "auto";
+  /** Modelo Ollama local (p. ej. qwen2.5:7b). */
+  ollamaModel?: OllamaChatModelId | string;
 };
 
 export function parseChatRequest(body: unknown): ChatRequest | { error: string } {
@@ -54,6 +59,23 @@ export function parseChatRequest(body: unknown): ChatRequest | { error: string }
   if (messages[messages.length - 1]?.role !== "user") {
     return { error: "El último mensaje tiene que ser tuyo." };
   }
+  let webSearch: boolean | "auto" | undefined;
+  if (record.webSearch === true || record.webSearch === false || record.webSearch === "auto") {
+    webSearch = record.webSearch;
+  } else if (record.webSearch === undefined) {
+    webSearch = false;
+  } else {
+    return { error: "El interruptor de internet no es válido." };
+  }
+
+  let ollamaModel: string | undefined;
+  if (typeof record.ollamaModel === "string" && record.ollamaModel.trim()) {
+    ollamaModel = record.ollamaModel.trim().slice(0, 80);
+    if (!isOllamaChatModelId(ollamaModel) && !/^[a-z0-9._:-]+$/i.test(ollamaModel)) {
+      return { error: "Ese modelo de Ollama no es válido." };
+    }
+  }
+
   return {
     activity: record.activity as ActivityId,
     model: record.model as ModelId,
@@ -62,6 +84,8 @@ export function parseChatRequest(body: unknown): ChatRequest | { error: string }
     messages,
     lessons: sanitizeLessons(record.lessons).slice(0, 80),
     documents: sanitizeDocuments(record.documents).slice(0, 40),
+    webSearch,
+    ollamaModel,
   };
 }
 

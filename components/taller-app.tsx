@@ -11,6 +11,7 @@ import {
   Palette,
   PanelRight,
   Plus,
+  Settings,
   Square,
   Sun,
   Trash2,
@@ -18,11 +19,24 @@ import {
   X,
 } from "lucide-react";
 import { LumenLogo } from "@/components/lumen-logo";
+import { FirstRunSetup } from "@/components/first-run-setup";
+import { SettingsSheet } from "@/components/settings-sheet";
 import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
 import { ACTIVITY_MAP, MODEL_LABEL } from "@/lib/activities";
+import { buildBackup, downloadJson, parseBackup } from "@/lib/backup";
+import { chatToMarkdown, downloadDocx, downloadText, openPrintablePdf } from "@/lib/export-doc";
+import { DEFAULT_QUALITY_MODEL } from "@/lib/ollama-models";
 import { syncLessonToEngine } from "@/lib/rag/sync-lesson";
 import { STYLE_QUICK_PROMPTS } from "@/lib/style";
+import {
+  confirmDestructive,
+  handleAssistantIntent,
+  sanitizeTasks,
+  type AssistantTask,
+  type PendingDestructive,
+} from "@/lib/tools/assistant";
 import { looksLikeMath } from "@/lib/tools/route";
+import { EMPTY_USER_MEMORY, sanitizeUserMemory, type UserMemory } from "@/lib/user-memory";
 import { formatHistoryTime } from "@/lib/history";
 import {
   createEmptySession,
@@ -88,6 +102,13 @@ export function TallerApp() {
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [skinsOpen, setSkinsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [showFirstRun, setShowFirstRun] = useState(true);
+  const [webSearch, setWebSearch] = useState<boolean | "auto">(false);
+  const [ollamaModel, setOllamaModel] = useState(DEFAULT_QUALITY_MODEL);
+  const [userMemory, setUserMemory] = useState<UserMemory>(EMPTY_USER_MEMORY);
+  const [tasks, setTasks] = useState<AssistantTask[]>([]);
+  const [pendingDestructive, setPendingDestructive] = useState<PendingDestructive | null>(null);
   const [docTitle, setDocTitle] = useState("");
   const [docText, setDocText] = useState("");
   const [imageQuery, setImageQuery] = useState("");
@@ -146,6 +167,10 @@ export function TallerApp() {
       setActiveSessionId(ensured.activeId);
       setLessons(stored.lessons);
       setDocuments(stored.documents.length ? stored.documents : seedDocuments());
+      setWebSearch(stored.webSearch ?? false);
+      setOllamaModel(stored.ollamaModel || DEFAULT_QUALITY_MODEL);
+      setUserMemory(stored.memory || EMPTY_USER_MEMORY);
+      setTasks(stored.tasks || []);
       document.documentElement.dataset.skin = stored.skin;
     } else {
       const ensured = ensureSessions([createEmptySession()]);
@@ -155,14 +180,20 @@ export function TallerApp() {
       document.documentElement.dataset.skin = "brisa";
     }
     setReady(true);
-    void fetch("/api/status")
+    void fetch("/api/ollama/models")
       .then(async (response) => {
         if (!response.ok) {
           setStatus("taller");
           return;
         }
-        const body = (await response.json()) as { modelReady?: boolean };
-        setStatus(body.modelReady ? "model" : "taller");
+        const body = (await response.json()) as {
+          recommended?: string;
+          models?: Array<{ id: string; installed?: boolean; recommended?: boolean }>;
+        };
+        const storedModel = readStorage()?.ollamaModel;
+        if (!storedModel && body.recommended) setOllamaModel(body.recommended);
+        const installed = body.models?.some((m) => m.id === (storedModel || body.recommended) && m.installed);
+        setStatus(installed ? "taller" : "taller");
       })
       .catch(() => setStatus("taller"));
   }, []);
@@ -181,9 +212,36 @@ export function TallerApp() {
     if (!ready || !activeSessionId) return;
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ model, effort, thinking, skin, sessions, activeSessionId, lessons, documents }),
+      JSON.stringify({
+        model,
+        effort,
+        thinking,
+        skin,
+        sessions,
+        activeSessionId,
+        lessons,
+        documents,
+        webSearch,
+        ollamaModel,
+        memory: userMemory,
+        tasks,
+      }),
     );
-  }, [model, effort, thinking, skin, sessions, activeSessionId, lessons, documents, ready]);
+  }, [
+    model,
+    effort,
+    thinking,
+    skin,
+    sessions,
+    activeSessionId,
+    lessons,
+    documents,
+    webSearch,
+    ollamaModel,
+    userMemory,
+    tasks,
+    ready,
+  ]);
 
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
@@ -504,9 +562,31 @@ export function TallerApp() {
         setError(json.error || `No pude leer ${file.name}`);
         return null;
       }
+      // Si piden resumen/estudio o solo adjuntan el archivo, genera ficha de estudio.
+      const wantsStudy =
+        !base.trim() ||
+        /\b(resume|resumen|ideas\s+clave|preguntas\s+de\s+estudio|estudia\s+(este|el)\s+archivo)\b/i.test(
+          base,
+        );
+      if (wantsStudy) {
+        const studyResponse = await fetch("/api/documents/study", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title: json.title || file.name,
+            text: json.text,
+            ollamaModel,
+          }),
+        });
+        const study = (await studyResponse.json()) as { answer?: string; error?: string };
+        if (study.answer) {
+          chunks.push(study.answer);
+          continue;
+        }
+      }
       chunks.push(
         [
-          `Documento adjunto «${json.title || file.name}»${json.indexed ? " (indexado en RAG)" : ""}:`,
+          `Documento adjunto «${json.title || file.name}»${json.indexed ? " (indexado local)" : ""}:`,
           json.text.slice(0, 12_000),
         ].join("\n"),
       );
@@ -586,6 +666,35 @@ export function TallerApp() {
       }
     }
 
+    // Asistente local: tareas, revisión PC mock y borrados con confirmación.
+    if (/^confirmar\s+borrado\b/i.test(content) && pendingDestructive) {
+      const result = confirmDestructive(pendingDestructive);
+      setPendingDestructive(null);
+      updateActiveMessages((current) => [
+        ...current,
+        { role: "user", content },
+        { role: "assistant", content: result, mode: "taller" },
+      ]);
+      setDraft("");
+      return;
+    }
+    const assistant = handleAssistantIntent(content, tasks);
+    if (assistant.applicable) {
+      if (assistant.tasks) setTasks(assistant.tasks);
+      if (assistant.pending) setPendingDestructive(assistant.pending);
+      updateActiveMessages((current) => [
+        ...current,
+        { role: "user", content },
+        {
+          role: "assistant",
+          content: `_Herramienta: Asistente_\n\n${assistant.answer}`,
+          mode: "taller",
+        },
+      ]);
+      setDraft("");
+      return;
+    }
+
     const historyTurns = [...thread, { role: "user" as const, content }];
     const placeholder: StoredMessage = { role: "assistant", content: "", reasoning: "", mode: "taller" };
     updateActiveMessages(() => [...historyTurns, placeholder]);
@@ -629,6 +738,8 @@ export function TallerApp() {
           messages: historyTurns.map((message) => ({ role: message.role, content: message.content })),
           lessons,
           documents,
+          webSearch,
+          ollamaModel,
         }),
         signal: controller.signal,
       });
@@ -857,17 +968,21 @@ export function TallerApp() {
           </Button>
           <Button variant="ghost" className="w-full justify-start" onClick={() => setKnowledgeOpen(true)}>
             <Library />
-            Conocimiento RAG
+            Conocimiento local
             {documents.length > 0 && <Badge className="ml-auto" variant="secondary">{documents.length}</Badge>}
+          </Button>
+          <Button variant="ghost" className="w-full justify-start" onClick={() => setSettingsOpen(true)}>
+            <Settings />
+            Ajustes
           </Button>
           <Button
             variant="outline"
             className="w-full justify-start"
-            disabled={streaming}
+            disabled={streaming || webSearch === false}
             onClick={() => void learnFromInternetNow()}
           >
             <Wifi />
-            Aprender de Internet ahora
+            {webSearch === false ? "Internet apagado" : "Aprender de Internet ahora"}
           </Button>
         </div>
       </aside>
@@ -903,8 +1018,11 @@ export function TallerApp() {
           <Button variant="ghost" size="icon" className="xl:hidden" onClick={() => setRecipeOpen(true)} aria-label="Ver la receta">
             <PanelRight />
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => setKnowledgeOpen(true)} aria-label="Conocimiento RAG">
+          <Button variant="ghost" size="icon" onClick={() => setKnowledgeOpen(true)} aria-label="Conocimiento local">
             <Library />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={() => setSettingsOpen(true)} aria-label="Ajustes">
+            <Settings />
           </Button>
           <Button variant="ghost" size="icon" onClick={() => setSkinsOpen(true)} aria-label="Interfaces">
             <Palette />
@@ -913,34 +1031,31 @@ export function TallerApp() {
         </header>
 
         <div className="mx-3 mt-2 flex items-center gap-2 overflow-x-auto rounded-[1.1rem] px-3 py-2 glass-panel md:mx-0 md:mr-3">
-          <Segment
-            label="Modelo"
-            current={model}
-            options={[
-              { id: "flash", label: "Flash" },
-              { id: "pro", label: "Pro" },
-            ]}
-            onChange={(id) => setModel(id as ModelId)}
-          />
-          <Segment
-            label="Esfuerzo"
-            current={effort}
-            options={[
-              { id: "low", label: "Bajo" },
-              { id: "high", label: "Alto" },
-              { id: "max", label: "Máximo" },
-            ]}
-            onChange={(id) => setEffort(id as Effort)}
-            disabled={!thinking}
-          />
           <Button
-            variant={thinking ? "secondary" : "outline"}
+            variant={webSearch === false ? "secondary" : "outline"}
             size="sm"
-            aria-pressed={thinking}
-            onClick={() => setThinking((value) => !value)}
+            aria-pressed={webSearch === false}
+            onClick={() => setWebSearch(false)}
+            title="Responder sin internet"
           >
-            {thinking ? "Pensando" : "Directo"}
+            Sin internet
           </Button>
+          <Button
+            variant={webSearch !== false ? "secondary" : "outline"}
+            size="sm"
+            aria-pressed={webSearch !== false}
+            onClick={() =>
+              setWebSearch(
+                webSearch === false ? "auto" : webSearch === "auto" ? true : false,
+              )
+            }
+            title="Ciclar: apagado → automático → siempre"
+          >
+            {webSearch === true ? "Internet: sí" : webSearch === "auto" ? "Internet: auto" : "Activar internet"}
+          </Button>
+          <Badge variant="secondary" className="hidden max-w-[10rem] truncate sm:inline-flex" title={ollamaModel}>
+            {ollamaModel}
+          </Badge>
           <Button variant="ghost" size="sm" className="ml-auto" onClick={newChat} disabled={streaming}>
             <Plus />
             Nuevo chat
@@ -1160,12 +1275,31 @@ export function TallerApp() {
       <Sheet open={knowledgeOpen} onOpenChange={setKnowledgeOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md">
           <SheetHeader>
-            <SheetTitle className="font-heading italic">Conocimiento RAG</SheetTitle>
+            <SheetTitle className="font-heading italic">Conocimiento local</SheetTitle>
           </SheetHeader>
           <div className="space-y-4 px-1 pb-6">
             <p className="text-sm leading-6 text-muted-foreground">
-              Pega apuntes o textos. {APP_NAME} los parte en fragmentos, los indexa (TF-IDF) y recupera los más parecidos a tu pregunta antes de responder.
+              Pega apuntes o sube PDF, DOCX o TXT. {APP_NAME} los indexa en este dispositivo (TF-IDF / embeddings locales) y los usa sin internet.
             </p>
+            <label className="flex w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-border px-3 py-3 text-sm hover:bg-muted/50">
+              Elegir carpeta o archivos (PDF, DOCX, TXT)
+              <input
+                type="file"
+                multiple
+                // @ts-expect-error webkitdirectory is non-standard but supported in Chromium/Edge
+                webkitdirectory=""
+                accept=".pdf,.docx,.txt,text/plain,application/pdf"
+                className="sr-only"
+                onChange={(event) => {
+                  const files = event.target.files ? [...event.target.files] : [];
+                  const usable = files.filter((file) =>
+                    /\.(pdf|docx|txt)$/i.test(file.name) || file.type.startsWith("text/"),
+                  );
+                  if (usable.length) setPendingFiles((current) => [...current, ...usable].slice(0, 12));
+                  event.target.value = "";
+                }}
+              />
+            </label>
             <div className="space-y-2">
               <input
                 value={docTitle}
@@ -1262,6 +1396,61 @@ export function TallerApp() {
           <SkinGallery current={skin} onSelect={chooseSkin} />
         </DialogContent>
       </Dialog>
+
+      {showFirstRun ? (
+        <FirstRunSetup ollamaModel={ollamaModel} onDone={() => setShowFirstRun(false)} />
+      ) : null}
+
+      <SettingsSheet
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        webSearch={webSearch}
+        onWebSearchChange={setWebSearch}
+        ollamaModel={ollamaModel}
+        onOllamaModelChange={setOllamaModel}
+        memory={userMemory}
+        onMemoryChange={setUserMemory}
+        onExportBackup={() => {
+          const stamp = new Date().toISOString().slice(0, 10);
+          downloadJson(
+            `lumen-backup-${stamp}.json`,
+            buildBackup({
+              sessions,
+              lessons,
+              documents,
+              memory: userMemory,
+              tasks,
+              settings: { webSearch, ollamaModel, skin, theme },
+            }),
+          );
+          setLearnNote("Copia de seguridad descargada (solo local).");
+          window.setTimeout(() => setLearnNote(""), 4000);
+        }}
+        onImportBackup={(file) => {
+          void file.text().then((raw) => {
+            const parsed = parseBackup(raw);
+            if ("error" in parsed) {
+              setError(parsed.error);
+              return;
+            }
+            const ensured = ensureSessions(parsed.sessions);
+            setSessions(ensured.sessions);
+            setActiveSessionId(ensured.activeId);
+            setLessons(sanitizeLessons(parsed.lessons));
+            setDocuments(sanitizeDocuments(parsed.documents));
+            setUserMemory(sanitizeUserMemory(parsed.memory));
+            setTasks(sanitizeTasks(parsed.tasks));
+            if (parsed.settings?.webSearch === true || parsed.settings?.webSearch === false || parsed.settings?.webSearch === "auto") {
+              setWebSearch(parsed.settings.webSearch);
+            }
+            if (typeof parsed.settings?.ollamaModel === "string") {
+              setOllamaModel(parsed.settings.ollamaModel);
+            }
+            setLearnNote("Copia de seguridad restaurada.");
+            window.setTimeout(() => setLearnNote(""), 4000);
+          });
+        }}
+      />
     </div>
   );
 }
@@ -1426,7 +1615,7 @@ function isThinkingStatus(text: string): boolean {
   const clean = normalizeStatusLabel(text);
   if (!clean) return true;
   if (clean.length > 64) return false;
-  return /^(Pensando|Buscando información|Preparando)/i.test(clean);
+  return /^(Pensando|Buscando información|Preparando|Pensando sin internet)/i.test(clean);
 }
 
 function ThinkingStatus({ label }: { label: string }) {
@@ -1525,6 +1714,50 @@ function MessageBubble({
               </Button>
               <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground" onClick={() => onStyle?.("natural")}>
                 Más natural
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-muted-foreground"
+                onClick={() => {
+                  const md = chatToMarkdown(
+                    [{ role: "assistant", content: bodyContent || message.content }],
+                    "Respuesta Lumen",
+                  );
+                  downloadText(`lumen-respuesta-${Date.now()}.md`, md);
+                }}
+              >
+                Exportar MD
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-muted-foreground"
+                onClick={() =>
+                  downloadDocx(
+                    `lumen-respuesta-${Date.now()}.docx`,
+                    "Respuesta Lumen",
+                    bodyContent || message.content,
+                  )
+                }
+              >
+                Exportar DOCX
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-muted-foreground"
+                onClick={() =>
+                  openPrintablePdf(
+                    "Respuesta Lumen",
+                    `<pre>${(bodyContent || message.content).replace(/</g, "&lt;")}</pre>`,
+                  )
+                }
+              >
+                PDF / imprimir
               </Button>
             </div>
             {correcting ? (
@@ -1654,8 +1887,9 @@ function HowItWorks() {
         <div className="space-y-3 text-sm leading-6">
           <p>Cada oficio tiene una herramienta local: cuentas, código, escritura, plan, traducción, resumen o investigación.</p>
           <p>Si se equivoca, marca Mal o escribe «está mal, la respuesta es…». Guarda la corrección y la reutiliza solo.</p>
-          <p>RAG: indexa documentos en Conocimiento, recupera fragmentos por similitud y los usa al responder. Investigar también indexa fuentes en vivo.</p>
-          <p>El panel Receta muestra el formato abierto de DeepSeek (deepseek-recipe 0.2.0).</p>
+          <p>Por defecto responde sin internet con el modelo local. Activa «Buscar en internet» solo si lo necesitas. Tus documentos viven en Conocimiento local.</p>
+          <p>En Ajustes eliges el modelo Ollama (1.5B rápido o 7B recomendado), tu memoria personal y copias de seguridad JSON.</p>
+          <p>Asistente: tareas, revisión del PC (lista blanca) y borrados solo con confirmación.</p>
         </div>
       </DialogContent>
     </Dialog>
@@ -1671,6 +1905,10 @@ function readStorage(): {
   activeSessionId: string | null;
   lessons: Lesson[];
   documents: RagDocument[];
+  webSearch?: boolean | "auto";
+  ollamaModel?: string;
+  memory?: UserMemory;
+  tasks?: AssistantTask[];
 } | null {
   try {
     const raw =
@@ -1688,6 +1926,10 @@ function readStorage(): {
       threads?: Partial<Record<ActivityId, StoredMessage[]>>;
       lessons?: unknown;
       documents?: unknown;
+      webSearch?: boolean | "auto";
+      ollamaModel?: string;
+      memory?: unknown;
+      tasks?: unknown;
     };
     if (parsed.model !== "flash" && parsed.model !== "pro") return null;
     if (parsed.effort !== "low" && parsed.effort !== "high" && parsed.effort !== "max") return null;
@@ -1706,6 +1948,13 @@ function readStorage(): {
       activeSessionId: typeof parsed.activeSessionId === "string" ? parsed.activeSessionId : null,
       lessons: sanitizeLessons(parsed.lessons),
       documents: sanitizeDocuments(parsed.documents),
+      webSearch:
+        parsed.webSearch === true || parsed.webSearch === false || parsed.webSearch === "auto"
+          ? parsed.webSearch
+          : false,
+      ollamaModel: typeof parsed.ollamaModel === "string" ? parsed.ollamaModel : undefined,
+      memory: sanitizeUserMemory(parsed.memory),
+      tasks: sanitizeTasks(parsed.tasks),
     };
   } catch {
     return null;

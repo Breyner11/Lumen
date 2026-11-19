@@ -64,6 +64,14 @@ export function detectIntent(input: string): IntentId {
   }
 
   if (
+    /\b(a[nñ]ade\s+tarea|lista\s+(mis\s+)?tareas|marca\s+tarea|revis(a|ar)\s+(mi\s+)?(pc|ordenador|computador)|limpia\s+temporales|modo\s+asistente|confirmar\s+borrado)\b/i.test(
+      lower,
+    )
+  ) {
+    return "organizar";
+  }
+
+  if (
     /\b(resaca|remedio|gripa|resfriado|dolor\s+de\s+cabeza|cocina|receta|hogar|limpiar|mancha|salud|tos|fiebre|quemadura\s+leve)\b/i.test(
       lower,
     )

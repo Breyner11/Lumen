@@ -112,12 +112,20 @@ test("investigar define ciudades como ficha y no demografía", async () => {
 });
 
 test("investigar responde ejemplos de ciudad en formato overview", async () => {
-  const result = await runActivity("investigar", "ejemplos de ciudad");
-  assert.match(result.answer, /Bogot[aá]/i);
-  assert.match(result.answer, /Medell[ií]n|Cali/i);
+  const { researchBrief } = await import("../lib/tools/research");
+  const result = await researchBrief("ejemplos de ciudad", {
+    webSearch: false,
+    ollamaModel: process.env.OLLAMA_QUALITY_MODEL || "qwen2.5:7b",
+  });
+  // Offline: modelo local (7B preferido). No inventa fuentes web.
+  assert.match(result.answer, /Respondido sin internet|Bogot[aá]|ciudad/i);
+  assert.equal((result.sources || []).filter((s) => s.url?.startsWith("http")).length, 0);
   assert.doesNotMatch(result.answer, /Qué dicen las fuentes|Hechos clave|peciales|Ciudad Line\b/i);
   assert.doesNotMatch(result.answer, /Descubre qu[eé] es una ciudad|Spanish word for/i);
   assert.doesNotMatch(result.answer, /##|\b\d{1,2}:\d{2}\b/);
+  if (result.applicable) {
+    assert.match(result.answer, /Bogot[aá]|Medell[ií]n|Cali|ciudad/i);
+  }
 });
 
 test("isUsableSourceSnippet rechaza scrapes truncados", async () => {

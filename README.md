@@ -1,12 +1,35 @@
 # Lumen
 
-Asistente todoterreno en un solo chat (**Preguntar**): calcula, investiga, estudia, programa, escribe, organiza, traduce, resume, atiende emergencias/vida diaria/proyectos, lee fotos, transcribe audio y analiza YouTube/GitHub/DOI. Aprende de internet en local (máx. ~8 GB RAM con Ollama). Armado sobre [deepseek-recipe](https://github.com/deepseek-ai/deepseek-recipe).
+Asistente todoterreno **local** en un solo chat (**Preguntar**): calcula, investiga, estudia, programa, escribe, organiza, traduce, resume, modo **Asistente** (tareas y PC con confirmación), lee fotos, transcribe audio y trabaja con tus PDF/DOCX/TXT. Por defecto **no usa internet**: responde con Ollama + documentos locales y marca *Respondido sin internet*. La búsqueda web es un interruptor opcional en Ajustes.
 
-El nombre visible vive en `lib/brand.ts` (`APP_NAME`). Al abrir verás un inicio tipo buscador con logo, caja grande y sugerencias; después de la primera pregunta el chat baja. Hay modo claro/oscuro (respeta el sistema) e interfaces opcionales.
+El nombre visible vive en `lib/brand.ts` (`APP_NAME`). UI en español, modo claro/oscuro e interfaces opcionales.
 
-**Investigar** (y las preguntas abiertas en Preguntar) consulta bases verificables: Wikipedia, Wikidata, OpenAlex, Crossref, Europe PMC y Open Library. El panel **Receta** muestra el prompt con los tokens de `deepseek-recipe` 0.2.0.
+## App de escritorio Windows (Tauri)
 
-Con `DEEPSEEK_API_KEY` las respuestas pasan por DeepSeek; sin clave, el modo taller sigue respondiendo con esas herramientas.
+Lumen se empaqueta como aplicación nativa (ventana propia, icono en la barra de tareas y Alt+Tab, bandeja, una sola instancia, atajo Ctrl+Espacio, inicio con Windows opcional). **No es una PWA.**
+
+- Código nativo: `src-tauri/`
+- Sidecar: `scripts/windows/start-lumen-sidecar.ps1` (arranca Next standalone y comprueba Ollama)
+- Instaladores NSIS (`.exe`) y MSI: workflow [Windows installer (Tauri)](.github/workflows/windows-tauri.yml)
+
+### Cómo descargar el instalador
+
+1. En GitHub → pestaña **Actions** → workflow **Windows installer (Tauri)**.
+2. Elige un run en verde (o **Run workflow**).
+3. En **Artifacts** descarga `lumen-windows-installers` (contiene `.exe` NSIS y/o `.msi`).
+4. Instálalo: crea accesos en Escritorio y Menú Inicio, aparece en «Agregar o quitar programas» y trae desinstalador.
+
+En este entorno Linux no se compila el MSI; el artifact lo genera `windows-latest`.
+
+### Modelos Ollama recomendados (Asus TUF A15 / 16 GB)
+
+| Modelo | Uso |
+|---|---|
+| `qwen2.5:7b` | **Por defecto** si hay ≥14 GB RAM o ≥6 GB VRAM — mejor español |
+| `deepseek-r1:7b` / `llama3.1:8b` | Alternativas 7–8B |
+| `deepseek-r1:1.5b` | Respaldo rápido |
+
+El selector está en **Ajustes**; el default se elige según RAM/VRAM detectadas (`/api/ollama/models`).
 
 ## Aprendizaje autónomo
 

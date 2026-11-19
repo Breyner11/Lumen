@@ -14,6 +14,23 @@ export const OLLAMA_URL = ollamaUrl();
 export const OLLAMA_CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL?.trim() || "deepseek-r1:1.5b";
 export const OLLAMA_VISION_MODEL = process.env.OLLAMA_VISION_MODEL?.trim() || "qwen2.5vl:3b";
 export const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL?.trim() || "nomic-embed-text";
+export const OLLAMA_QUALITY_MODEL = process.env.OLLAMA_QUALITY_MODEL?.trim() || "qwen2.5:7b";
+
+/** Prefiere 7B si está instalado; si no, cae al respaldo 1.5B. */
+export async function resolveChatModel(preferred?: string): Promise<string> {
+  const models = await listOllamaModels(AbortSignal.timeout(2_500));
+  const candidates = [
+    preferred?.trim(),
+    process.env.OLLAMA_CHAT_MODEL?.trim(),
+    OLLAMA_QUALITY_MODEL,
+    OLLAMA_CHAT_MODEL,
+    "deepseek-r1:1.5b",
+  ].filter(Boolean) as string[];
+  for (const candidate of candidates) {
+    if (modelIsInstalled(models, candidate)) return candidate;
+  }
+  return preferred?.trim() || OLLAMA_CHAT_MODEL;
+}
 
 /** Opciones base: prioriza respuestas más rápidas en ~8 GB RAM. */
 export const OLLAMA_OPTIONS = {
@@ -83,10 +100,19 @@ type EnsureResult = {
 let ensureCache: { at: number; result: EnsureResult } | null = null;
 const ENSURE_TTL_MS = 45_000;
 
-export async function ensureChatModel(signal?: AbortSignal): Promise<EnsureResult> {
-  const model = OLLAMA_CHAT_MODEL;
+export async function ensureChatModel(
+  signal?: AbortSignal,
+  preferredModel?: string,
+): Promise<EnsureResult> {
+  const model = preferredModel?.trim() || OLLAMA_CHAT_MODEL;
   const url = ollamaUrl();
-  if (ensureCache && Date.now() - ensureCache.at < ENSURE_TTL_MS && ensureCache.result.ok) {
+  const cacheKey = model;
+  if (
+    ensureCache &&
+    Date.now() - ensureCache.at < ENSURE_TTL_MS &&
+    ensureCache.result.ok &&
+    ensureCache.result.model === cacheKey
+  ) {
     return ensureCache.result;
   }
   try {
@@ -146,12 +172,12 @@ export async function ollamaChat(options: {
   numPredict?: number;
   numCtx?: number;
 }): Promise<{ ok: boolean; text: string; thinking?: string; model: string; error?: string }> {
-  const model = options.model ?? OLLAMA_CHAT_MODEL;
+  const model = await resolveChatModel(options.model);
   const url = ollamaUrl();
   const timeoutMs = options.timeoutMs ?? OLLAMA_CHAT_TIMEOUT_MS;
   const keepAlive = options.keepAlive ?? OLLAMA_CHAT_KEEP_ALIVE;
 
-  const ensured = await ensureChatModel(options.signal);
+  const ensured = await ensureChatModel(options.signal, model);
   if (!ensured.ok) {
     console.error("[taller/ollama]", ensured.error);
     return { ok: false, text: "", model, error: ensured.error };

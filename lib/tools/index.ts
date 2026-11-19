@@ -3,6 +3,7 @@ import { reviewCode } from "@/lib/tools/code";
 import { handleDailyLife, handleEmergency, handleProject } from "@/lib/tools/everyday";
 import { analyzeAndLearnLink, extractUrls, formatLinkAnswer } from "@/lib/tools/links";
 import { solveMath } from "@/lib/tools/math";
+import { handleAssistantIntent, type AssistantTask } from "@/lib/tools/assistant";
 import { organizePlan } from "@/lib/tools/plan";
 import { researchBrief } from "@/lib/tools/research";
 import { detectIntent, intentLabel, isSpecialtyIntent } from "@/lib/tools/route";
@@ -16,9 +17,15 @@ export type ToolResult = {
   answer: string;
   notes: string;
   routedTo?: string;
+  tasks?: AssistantTask[];
+  pendingConfirm?: string;
 };
 
-export async function runActivity(activity: ActivityId, input: string): Promise<ToolResult> {
+export async function runActivity(
+  activity: ActivityId,
+  input: string,
+  options?: { tasks?: AssistantTask[]; webSearch?: boolean | "auto"; ollamaModel?: string },
+): Promise<ToolResult> {
   if (activity === "preguntar") {
     const routed = detectIntent(input);
     if (routed === "emergencia") {
@@ -87,16 +94,33 @@ export async function runActivity(activity: ActivityId, input: string): Promise<
         notes: solved.applicable ? solved.answer : "",
       };
     }
-    case "organizar":
+    case "organizar": {
+      const assistant = handleAssistantIntent(input, options?.tasks ?? []);
+      if (assistant.applicable) {
+        return {
+          applicable: true,
+          answer: assistant.answer,
+          notes: "",
+          tasks: assistant.tasks,
+          pendingConfirm: assistant.pending?.detail,
+        };
+      }
       return organizePlan(input);
+    }
     case "traducir":
       return prepareTranslation(input);
     case "resumir":
       return summarizeText(input);
     case "investigar":
-      return researchBrief(input);
+      return researchBrief(input, {
+        webSearch: options?.webSearch ?? false,
+        ollamaModel: options?.ollamaModel,
+      });
     case "preguntar":
-      return researchBrief(input);
+      return researchBrief(input, {
+        webSearch: options?.webSearch ?? false,
+        ollamaModel: options?.ollamaModel,
+      });
   }
 }
 
