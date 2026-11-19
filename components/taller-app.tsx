@@ -646,7 +646,7 @@ export function TallerApp() {
           if (payload.type === "status") {
             // Solo actualiza el texto provisional si aún no hay respuesta.
             if (!answerPreview) {
-              patchAssistant({ content: "_" + (payload.text || "Preparando...") + "_" });
+              patchAssistant({ content: "_" + (payload.text || "Pensando…") + "_" });
             }
             continue;
           }
@@ -1455,7 +1455,7 @@ function MessageBubble({
         {!mine && (
           <div className="mb-2 flex items-center gap-2">
             <Badge variant="outline">{message.mode === "model" ? "DeepSeek" : "Taller"}</Badge>
-            {pending && !message.content && <span className="text-xs text-muted-foreground">Preparando la respuesta…</span>}
+            {pending && !message.content && <span className="text-xs text-muted-foreground">Pensando…</span>}
           </div>
         )}
         {message.reasoning && (

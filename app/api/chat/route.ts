@@ -116,7 +116,12 @@ function composeStream(request: ChatRequest, signal: AbortSignal): ReadableStrea
 
       try {
         // Primer byte inmediato: evita "Failed to fetch" por conexión idle.
-        safeEnqueue({ type: "status", text: "Preparando respuesta con DeepSeek…" });
+        const searching =
+          request.activity === "investigar" || request.activity === "aprender";
+        safeEnqueue({
+          type: "status",
+          text: searching ? "Buscando información…" : "Pensando…",
+        });
         heartbeat = setInterval(() => {
           safeEnqueue({ type: "ping", t: Date.now() });
         }, HEARTBEAT_MS);
@@ -141,7 +146,10 @@ function composeStream(request: ChatRequest, signal: AbortSignal): ReadableStrea
           return;
         }
 
-        safeEnqueue({ type: "status", text: "Redactando con deepseek-r1:1.5b…" });
+        safeEnqueue({
+          type: "status",
+          text: searching ? "Buscando información…" : "Pensando…",
+        });
         const composed = await composeConversation({ ...request, now: new Date() });
         if (signal.aborted) return;
         emitComposed(controller, composed, OLLAMA_CHAT_MODEL);
