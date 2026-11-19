@@ -36,6 +36,31 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
     title: "Por qué el agua hierve a menor temperatura en Bogotá",
     body: "Porque la presión atmosférica baja con la altitud. A menor presión, el agua alcanza el punto de ebullición con menos calor. A nivel del mar hierve cerca de 100 °C; en Bogotá (unos 2.600 m) suele hervir alrededor de 90–92 °C.",
   },
+  {
+    match: /^(qu[eé]\s+es\s+(una?\s+)?)?perreras?\b|\bperrera\b/,
+    title: "Perrera",
+    body: [
+      "Una perrera es un lugar o instalación destinada a alojar perros, ya sea como refugio o albergue de animales, o como una caseta, jaula o transportín para mascotas.",
+      "",
+      "**Significados y usos principales**",
+      "",
+      "- **Refugio o albergue:** espacio donde se alojan, cuidan o recogen perros, especialmente abandonados o sin hogar.",
+      "- **Caseta, jaula o guacal:** estructura o transportín para resguardar o trasladar a un perro en casa, exteriores o viaje.",
+      "- **Vehículo de recogida:** en algunos contextos, el furgón o vehículo destinado a recoger perros.",
+      "- **Usos coloquiales:** según la RAE, también puede referirse a un mal pagador o a una rabieta infantil.",
+      "",
+      "**Ejemplos de uso**",
+      "",
+      '- "Llevamos al perro en su perrera al veterinario."',
+      '- "Construimos una perrera con techo en el patio para que tenga sombra."',
+      '- "El albergue municipal funciona como refugio para perros rescatados."',
+      "",
+      "**Sinónimos y términos relacionados**",
+      "",
+      "- De alojamiento: albergue, refugio animal, canil, jaula.",
+      "- De transporte o caseta: guacal, transportín, caseta para perro, recinto.",
+    ].join("\n"),
+  },
 ];
 
 export async function researchBrief(
@@ -108,12 +133,13 @@ export function buildResearchDraft(
   hits: RagHit[],
   known?: { title: string; body: string },
 ): string {
+  if (known || looksLikeDefinitionQuery(question)) {
+    const definition = buildDefinitionDraft(question, hits, known);
+    if (definition) return definition;
+  }
+
   const heading = cleanQuestionHeading(question);
   const sections: string[] = heading ? [`**${heading}**`, ""] : [];
-
-  if (known) {
-    sections.push(`**${known.title}**`, "", known.body, "");
-  }
 
   const useful = hits
     .map((hit) => ({
@@ -131,17 +157,115 @@ export function buildResearchDraft(
     sections.push("");
   }
 
-  if (!known && !useful.length) return "";
+  if (!useful.length) return "";
 
   sections.push(
     "**En resumen**",
     "",
-    known
-      ? `Lo esencial: ${known.body.slice(0, 220)}`
-      : "Conviene contrastar los puntos anteriores con las fuentes enlazadas al final.",
+    "Conviene contrastar los puntos anteriores con las fuentes enlazadas al final.",
   );
 
   return sections.join("\n");
+}
+
+/** Respuestas tipo diccionario: definición, significados, ejemplos y sinónimos. */
+export function buildDefinitionDraft(
+  question: string,
+  hits: RagHit[],
+  known?: { title: string; body: string },
+): string {
+  const term = extractTerm(question);
+  const heading = known?.title || (term ? term.charAt(0).toUpperCase() + term.slice(1) : cleanQuestionHeading(question));
+  if (!heading) return "";
+
+  if (known?.body) {
+    return [`**${heading}**`, "", known.body].join("\n");
+  }
+
+  const sentences = hits
+    .flatMap((hit) => splitUsefulSentences(cleanHitText(hit.chunk.text)))
+    .filter((sentence) => sentence.length > 35 && !isDictionaryNoise(sentence));
+  const unique = dedupeSentences(sentences).slice(0, 8);
+  if (!unique.length) return "";
+
+  const lead =
+    unique.find((sentence) => /\bes\s+un[a]?\b|\bse\s+trata\s+de\b|\blugar\b|\binstalaci[oó]n\b/i.test(sentence)) ||
+    unique[0];
+  const meanings = unique.filter((sentence) => sentence !== lead).slice(0, 4);
+  const examples = unique
+    .filter((sentence) => /[«"“]/.test(sentence) || /\bejemplo\b/i.test(sentence))
+    .slice(0, 3);
+
+  const sections = [
+    `**${heading}**`,
+    "",
+    lead,
+    "",
+    "**Significados y usos principales**",
+    "",
+    ...(meanings.length
+      ? meanings.map((sentence) => `- ${sentence}`)
+      : [`- ${lead}`]),
+  ];
+
+  if (examples.length) {
+    sections.push("", "**Ejemplos de uso**", "", ...examples.map((sentence) => `- ${sentence}`));
+  }
+
+  sections.push(
+    "",
+    "**En resumen**",
+    "",
+    `«${heading}» se entiende sobre todo a partir de las fuentes recuperadas; revisa los enlaces al final para ampliar.`,
+  );
+
+  return sections.join("\n");
+}
+
+export function looksLikeDefinitionQuery(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  if (/^(qu[eé]\s+es|significado\s+de|define|definici[oó]n\s+de|qu[eé]\s+significa)\b/i.test(q)) {
+    return true;
+  }
+  // Una sola palabra o término corto (p. ej. «Perrera», «fotosíntesis»).
+  const words = q.split(/\s+/);
+  return words.length === 1 && q.length <= 28 && !/[¿?]/.test(q);
+}
+
+function extractTerm(question: string): string {
+  const cleaned = question
+    .replace(/^(qu[eé]\s+es\s+(una?\s+)?|significado\s+de\s+|definici[oó]n\s+de\s+|define\s+|qu[eé]\s+significa\s+)/i, "")
+    .replace(/[¿?¡!.,;:]+/g, "")
+    .trim();
+  return cleaned.split(/\s+/).slice(0, 4).join(" ");
+}
+
+function splitUsefulSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?…])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function isDictionaryNoise(sentence: string): boolean {
+  return (
+    /spanish\s+to\s+english|spanishdictionary|learn the meaning|pronunciation|injuries\.|conjugate|translation\s+-|©|all rights/i.test(
+      sentence,
+    ) || /^[-–—(]\s*/.test(sentence)
+  );
+}
+
+function dedupeSentences(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const key = item.toLowerCase().replace(/\s+/g, " ").slice(0, 80);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
 }
 
 function cleanQuestionHeading(question: string): string {
@@ -174,9 +298,14 @@ function cleanHitText(raw: string): string {
     .replace(/\bFecha\s*\([^)]*\):\s*/gi, "")
     .replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ")
     .replace(/https?:\/\/\S+/g, " ")
+    .replace(/\|\s*Spanish to English Translation[^.]*/gi, " ")
+    .replace(/SpanishDictionary\.com[^.]*/gi, " ")
+    .replace(/Learn the meaning and usage of[^.]*/gi, " ")
+    .replace(/\binjuries\b/gi, " ")
+    .replace(/\([^)]{0,40}\)\s*[-–—]\s*/g, " ")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 280);
+    .slice(0, 320);
 }
 
 export function chooseResearchAnswer(

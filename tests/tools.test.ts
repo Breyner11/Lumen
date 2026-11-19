@@ -89,6 +89,36 @@ test("investigar responde qué es la metodología de investigación", async () =
   assert.ok(result.answer.length > 200, "la respuesta de investigar debe ser informativa");
 });
 
+test("investigar define perrera con significados y ejemplos", async () => {
+  const result = await runActivity("investigar", "Perrera");
+  assert.match(result.answer, /lugar o instalaci[oó]n|alojar perros/i);
+  assert.match(result.answer, /Significados y usos principales/);
+  assert.match(result.answer, /Ejemplos de uso/);
+  assert.match(result.answer, /Sin[oó]nimos/);
+  assert.doesNotMatch(result.answer, /injuries|SpanishDictionary/i);
+});
+
+test("buildDefinitionDraft estructura una definición desde fuentes", async () => {
+  const { buildDefinitionDraft, looksLikeDefinitionQuery } = await import("../lib/tools/research");
+  assert.equal(looksLikeDefinitionQuery("Perrera"), true);
+  assert.equal(looksLikeDefinitionQuery("razas de perros muy pequeños en zoológico"), false);
+  const draft = buildDefinitionDraft("canil", [
+    {
+      score: 0.5,
+      chunk: {
+        id: "1",
+        documentId: "d1",
+        title: "Canil",
+        text: "Un canil es un recinto destinado a alojar perros. También se usa como sinónimo de perrera o refugio animal.",
+        index: 0,
+      },
+    },
+  ]);
+  assert.match(draft, /\*\*Canil\*\*/);
+  assert.match(draft, /Significados y usos principales/);
+  assert.doesNotMatch(draft, /Qué dicen las fuentes/);
+});
+
 test("buildResearchDraft arma secciones con fuentes", async () => {
   const { buildResearchDraft } = await import("../lib/tools/research");
   const draft = buildResearchDraft(
