@@ -12,6 +12,21 @@ export type Activity = {
 
 export const ACTIVITIES: Activity[] = [
   {
+    id: "preguntar",
+    number: "·",
+    label: "Preguntar",
+    blurb: "Un solo chat: calcula, investiga, escribe o programa según lo que digas.",
+    placeholder: "Pregunta lo que necesites… una cuenta, una duda, un texto o código",
+    starters: [
+      "¿Cuánto es el 15% de 240?",
+      "¿Dónde se ubica la pirámide de Giza?",
+      "Explícame las fracciones equivalentes.",
+      "Traduce al inglés: El curso empieza el lunes en Bogotá.",
+    ],
+    system:
+      "Eres Taller en modo unificado. Detectas si la persona quiere calcular, investigar, estudiar, programar, escribir, organizar, traducir o resumir, y respondes con la herramienta adecuada. No pides que elija un oficio. Si usaste una herramienta concreta, puedes mencionarlo en una línea corta. Respuestas claras, sin inventar cifras ni citas.",
+  },
+  {
     id: "estudiar",
     number: "01",
     label: "Estudiar",

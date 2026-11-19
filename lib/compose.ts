@@ -5,6 +5,7 @@ import { runRagPipeline } from "@/lib/rag/pipeline";
 import type { RagDocument } from "@/lib/rag/types";
 import { renderRecipePrompt } from "@/lib/recipe-prompt";
 import { researchBrief } from "@/lib/tools/research";
+import { detectIntent, intentLabel, type SpecialtyId } from "@/lib/tools/route";
 import { runActivity } from "@/lib/tools";
 import type { ActivityId, ChatTurn, Effort, ModelId, RecipeMessage } from "@/lib/types";
 
@@ -47,7 +48,12 @@ export async function composeConversation(options: {
   const latest = lastUserText(options.messages);
   const lessons = options.lessons ?? [];
   const documents = options.documents ?? [];
-  const learned = findLesson(lessons, options.activity, latest);
+  const routedSpecialty: SpecialtyId | null =
+    options.activity === "preguntar" ? detectIntent(latest) : null;
+  const effectiveActivity: ActivityId = routedSpecialty ?? options.activity;
+  const learned =
+    findLesson(lessons, options.activity, latest) ??
+    (routedSpecialty ? findLesson(lessons, routedSpecialty, latest) : null);
   if (learned) {
     const answer = formatLessonAnswer(learned);
     const notes = `Lección aprendida (${learned.id}): usar la corrección guardada para esta pregunta.`;
@@ -66,13 +72,18 @@ export async function composeConversation(options: {
         thinking: options.thinking,
         messages,
       }),
-      answer,
+      answer: routedSpecialty
+        ? `_Herramienta: ${intentLabel(routedSpecialty)}_\n\n${answer}`
+        : answer,
       learnedFrom: learned.id,
     };
   }
 
-  if (options.activity === "investigar") {
+  if (options.activity === "investigar" || routedSpecialty === "investigar") {
     const tool = await researchBrief(latest, { documents, lessons });
+    const answer = routedSpecialty
+      ? `_Herramienta: Investigar_\n\n${tool.answer}`
+      : tool.answer;
     const messages: RecipeMessage[] = [
       {
         role: "system",
@@ -88,7 +99,7 @@ export async function composeConversation(options: {
         thinking: options.thinking,
         messages,
       }),
-      answer: tool.answer,
+      answer,
       ragHits: tool.notes.includes("Contexto recuperado por RAG") || tool.answer.includes("Contexto RAG")
         ? 1
         : 0,
@@ -97,10 +108,13 @@ export async function composeConversation(options: {
 
   const rag = await runRagPipeline({
     query: latest,
-    activity: options.activity,
+    activity: effectiveActivity,
     documents,
     lessons,
-    includeLiveSources: options.activity === "estudiar",
+    includeLiveSources:
+      effectiveActivity === "estudiar" ||
+      effectiveActivity === "investigar" ||
+      options.activity === "preguntar",
   });
 
   const tool = await runActivity(options.activity, latest);

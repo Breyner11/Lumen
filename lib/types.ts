@@ -5,6 +5,7 @@ export const EFFORTS = ["low", "high", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
 export const ACTIVITY_IDS = [
+  "preguntar",
   "estudiar",
   "programar",
   "escribir",

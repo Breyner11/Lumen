@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { detectIntent } from "../lib/tools/route";
+import { runActivity } from "../lib/tools/index";
+
+test("detecta cuentas en Preguntar", () => {
+  assert.equal(detectIntent("¿Cuánto es el 15% de 240?"), "calcular");
+  assert.equal(detectIntent("integra x**2"), "calcular");
+  assert.equal(detectIntent("Resuelve 2x + 5 = 17"), "calcular");
+});
+
+test("detecta investigación y estudio", () => {
+  assert.equal(detectIntent("¿Dónde se ubica la pirámide de Giza?"), "investigar");
+  assert.equal(detectIntent("Explícame las fracciones equivalentes"), "estudiar");
+});
+
+test("detecta traducir y programar", () => {
+  assert.equal(detectIntent("Traduce al inglés: El curso empieza el lunes"), "traducir");
+  assert.equal(
+    detectIntent("```js\nfunction promedio(notas) {\n  return notas[0];\n}\n```"),
+    "programar",
+  );
+});
+
+test("preguntar enruta una cuenta y marca la herramienta", async () => {
+  const result = await runActivity("preguntar", "¿Cuánto es el 15% de 240?");
+  assert.equal(result.routedTo, "calcular");
+  assert.match(result.answer, /Herramienta: Calcular/);
+  assert.match(result.answer, /\*\*36\*\*/);
+});

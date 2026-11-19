@@ -13,6 +13,7 @@ import {
   Languages,
   Library,
   ListChecks,
+  MessageCircle,
   Palette,
   PanelRight,
   PenLine,
@@ -22,6 +23,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { ACTIVITIES, ACTIVITY_MAP, MODEL_LABEL } from "@/lib/activities";
+import { looksLikeMath, SPECIALTY_IDS } from "@/lib/tools/route";
 import { formatHistoryTime, pushHistory, sanitizeHistory, type HistoryEntry } from "@/lib/history";
 import {
   parseCorrectionMessage,
@@ -54,6 +56,7 @@ import { Textarea } from "@/components/ui/textarea";
 const STORAGE_KEY = "taller-receta-v2";
 const EMPTY_THREAD: StoredMessage[] = [];
 const ICONS = {
+  preguntar: MessageCircle,
   estudiar: BookOpen,
   programar: Code2,
   escribir: PenLine,
@@ -63,6 +66,10 @@ const ICONS = {
   resumir: AlignLeft,
   investigar: Search,
 } as const;
+
+const SPECIALTY_ACTIVITIES = ACTIVITIES.filter((item) =>
+  (SPECIALTY_IDS as readonly string[]).includes(item.id),
+);
 
 type Threads = Partial<Record<ActivityId, StoredMessage[]>>;
 type Status = "loading" | "taller" | "model";
@@ -77,7 +84,7 @@ type RagStatus = {
 };
 
 export function TallerApp() {
-  const [activity, setActivity] = useState<ActivityId>("estudiar");
+  const [activity, setActivity] = useState<ActivityId>("preguntar");
   const [model, setModel] = useState<ModelId>("flash");
   const [effort, setEffort] = useState<Effort>("high");
   const [thinking, setThinking] = useState(true);
@@ -283,7 +290,8 @@ export function TallerApp() {
     if (streaming) return;
     setError("");
     setLearnNote("");
-    setActivity("calcular");
+    const target: ActivityId = activity === "preguntar" ? "preguntar" : "calcular";
+    setActivity(target);
     const previewUrl = URL.createObjectURL(file);
     const userMessage: StoredMessage = {
       role: "user",
@@ -292,7 +300,7 @@ export function TallerApp() {
     const placeholder: StoredMessage = { role: "assistant", content: "", mode: "taller" };
     setThreads((current) => ({
       ...current,
-      calcular: [...(current.calcular ?? []), userMessage, placeholder],
+      [target]: [...(current[target] ?? []), userMessage, placeholder],
     }));
     setStreaming(true);
     try {
@@ -300,21 +308,24 @@ export function TallerApp() {
       body.append("file", file, file.name);
       const response = await fetch("/api/vision/solve", { method: "POST", body });
       const json = (await response.json()) as { ok?: boolean; answer?: string; error?: string };
-      const answer =
+      let answer =
         json.answer ||
         json.error ||
         "No pude leer la imagen. Arranca el motor Python y `ollama pull qwen2.5-vl:3b`.";
+      if (target === "preguntar" && !answer.includes("Herramienta:")) {
+        answer = `_Herramienta: Calcular_\n\n${answer}`;
+      }
       setThreads((current) => {
-        const list = [...(current.calcular ?? [])];
+        const list = [...(current[target] ?? [])];
         const last = list[list.length - 1];
         if (last?.role === "assistant") {
           list[list.length - 1] = { ...last, content: answer, mode: "taller" };
         }
-        return { ...current, calcular: list };
+        return { ...current, [target]: list };
       });
       setHistory((entries) =>
         pushHistory(entries, {
-          activity: "calcular",
+          activity: target,
           query: `imagen:${file.name}`,
           preview: answer.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, 180),
         }),
@@ -338,8 +349,8 @@ export function TallerApp() {
     setError("");
     setLearnNote("");
 
-    // Calcular: prefer SymPy engine when available (exact derivatives/integrals/equations).
-    if (activity === "calcular") {
+    // Calcular / Preguntar (si parece cuenta): prefer SymPy engine.
+    if (activity === "calcular" || (activity === "preguntar" && looksLikeMath(content))) {
       setStreaming(true);
       setDraft("");
       try {
@@ -354,17 +365,22 @@ export function TallerApp() {
           remembered?: boolean;
         };
         if (json.answer) {
+          const mathActivity = activity === "preguntar" ? "preguntar" : "calcular";
+          const answer =
+            mathActivity === "preguntar" && !json.answer!.includes("Herramienta:")
+              ? `_Herramienta: Calcular_\n\n${json.answer}`
+              : json.answer!;
           const historyTurns: StoredMessage[] = [
             ...thread,
             { role: "user", content },
-            { role: "assistant", content: json.answer, mode: "taller" },
+            { role: "assistant", content: answer, mode: "taller" },
           ];
-          setThreads((currentThreads) => ({ ...currentThreads, calcular: historyTurns }));
+          setThreads((currentThreads) => ({ ...currentThreads, [mathActivity]: historyTurns }));
           setHistory((entries) =>
             pushHistory(entries, {
-              activity: "calcular",
+              activity: mathActivity,
               query: content,
-              preview: json.answer!.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, 180),
+              preview: answer.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, 180),
             }),
           );
           if (json.remembered) {
@@ -530,19 +546,36 @@ export function TallerApp() {
       <aside className="glass-panel m-3 hidden w-[17.5rem] shrink-0 flex-col overflow-hidden rounded-[1.4rem] md:flex">
         <div className="px-5 pt-6 pb-4">
           <p className="font-heading text-[2rem] leading-none tracking-tight italic">Taller</p>
-          <p className="mt-2 text-sm leading-5 text-muted-foreground">Ocho oficios. Elige una cara y pregunta.</p>
+          <p className="mt-2 text-sm leading-5 text-muted-foreground">
+            Un solo chat. Pregunta lo que necesites.
+          </p>
         </div>
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 pb-3" aria-label="Oficios">
-          {ACTIVITIES.map((item, index) => (
-            <ActivityButton
-              key={item.id}
-              id={item.id}
-              selected={item.id === activity}
-              disabled={streaming}
-              onSelect={chooseActivity}
-              delay={index * 40}
-            />
-          ))}
+        <nav className="flex-1 space-y-3 overflow-y-auto px-3 pb-3" aria-label="Oficios">
+          <ActivityButton
+            id="preguntar"
+            selected={activity === "preguntar"}
+            disabled={streaming}
+            onSelect={chooseActivity}
+            delay={0}
+            featured
+          />
+          <div>
+            <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              Especialidades
+            </p>
+            <div className="space-y-1">
+              {SPECIALTY_ACTIVITIES.map((item, index) => (
+                <ActivityButton
+                  key={item.id}
+                  id={item.id}
+                  selected={item.id === activity}
+                  disabled={streaming}
+                  onSelect={chooseActivity}
+                  delay={(index + 1) * 40}
+                />
+              ))}
+            </div>
+          </div>
         </nav>
         <div className="space-y-2 border-t border-border/70 px-3 py-3">
           <Button variant="outline" className="w-full justify-start" onClick={() => setSkinsOpen(true)}>
@@ -565,7 +598,7 @@ export function TallerApp() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="mx-3 mt-3 flex items-center gap-2 rounded-[1.2rem] px-3 py-3 glass-panel md:mx-0 md:mt-3 md:mr-3 md:px-5">
           <Button variant="outline" className="md:hidden titlebar-no-drag" onClick={() => setActivitiesOpen(true)}>
-            Oficios
+            Menú
           </Button>
           <div className="min-w-0 flex-1">
             <p className="truncate font-heading text-xl leading-none italic md:text-2xl">{current.label}</p>
@@ -694,11 +727,7 @@ export function TallerApp() {
             <Textarea
               id="mensaje"
               value={draft}
-              placeholder={
-                activity === "calcular"
-                  ? "15% de 240, 2x+5=17, integra x**2… o sube una foto"
-                  : current.placeholder
-              }
+              placeholder={current.placeholder}
               disabled={streaming}
               rows={2}
               className="max-h-40 min-h-16 border-0 bg-transparent shadow-none focus-visible:ring-0"
@@ -721,7 +750,10 @@ export function TallerApp() {
                 if (file) void solveImage(file);
               }}
             />
-            {(activity === "calcular" || activity === "investigar" || activity === "estudiar") && (
+            {(activity === "preguntar" ||
+              activity === "calcular" ||
+              activity === "investigar" ||
+              activity === "estudiar") && (
               <Button
                 type="button"
                 variant="outline"
@@ -753,12 +785,32 @@ export function TallerApp() {
       <Sheet open={activitiesOpen} onOpenChange={setActivitiesOpen}>
         <SheetContent side="left" className="w-80">
           <SheetHeader>
-            <SheetTitle className="font-heading italic">Oficios</SheetTitle>
+            <SheetTitle className="font-heading italic">Menú</SheetTitle>
           </SheetHeader>
-          <div className="space-y-1 px-3">
-            {ACTIVITIES.map((item) => (
-              <ActivityButton key={item.id} id={item.id} selected={item.id === activity} disabled={streaming} onSelect={chooseActivity} />
-            ))}
+          <div className="space-y-3 px-3">
+            <ActivityButton
+              id="preguntar"
+              selected={activity === "preguntar"}
+              disabled={streaming}
+              onSelect={chooseActivity}
+              featured
+            />
+            <div>
+              <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                Especialidades
+              </p>
+              <div className="space-y-1">
+                {SPECIALTY_ACTIVITIES.map((item) => (
+                  <ActivityButton
+                    key={item.id}
+                    id={item.id}
+                    selected={item.id === activity}
+                    disabled={streaming}
+                    onSelect={chooseActivity}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
         </SheetContent>
       </Sheet>
@@ -944,12 +996,14 @@ function ActivityButton({
   disabled,
   onSelect,
   delay = 0,
+  featured = false,
 }: {
   id: ActivityId;
   selected: boolean;
   disabled: boolean;
   onSelect: (id: ActivityId) => void;
   delay?: number;
+  featured?: boolean;
 }) {
   const item = ACTIVITY_MAP[id];
   const Icon = ICONS[id];
@@ -959,13 +1013,17 @@ function ActivityButton({
       disabled={disabled}
       onClick={() => onSelect(id)}
       className={`animate-rise flex w-full items-start gap-3 rounded-xl px-2.5 py-2.5 text-left transition disabled:opacity-50 ${
-        selected ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted"
+        selected
+          ? "bg-primary text-primary-foreground shadow-sm"
+          : featured
+            ? "border border-primary/25 bg-primary/8 hover:bg-primary/12"
+            : "hover:bg-muted"
       }`}
       style={{ animationDelay: `${delay}ms` }}
       aria-current={selected ? "page" : undefined}
     >
       <span className={`mt-0.5 font-mono text-[11px] ${selected ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
-        {item.number}
+        {featured ? "★" : item.number}
       </span>
       <span className="min-w-0">
         <span className="flex items-center gap-1.5 text-sm font-medium">
@@ -1002,8 +1060,17 @@ function WelcomeState({
         ¿En qué te puedo ayudar hoy?
       </p>
       <p className="mt-3 max-w-lg text-sm leading-6 text-muted-foreground">
-        Estás en <span className="font-medium text-foreground">{activityLabel}</span>. Escribe abajo o elige un comienzo. También puedes
-        cambiar la cara de Taller.
+        {activityLabel === "Preguntar" ? (
+          <>
+            Todo en un solo chat: cuentas, dudas, textos o código. Taller elige la herramienta. También puedes usar una especialidad o
+            cambiar la cara de Taller.
+          </>
+        ) : (
+          <>
+            Estás en <span className="font-medium text-foreground">{activityLabel}</span>. Escribe abajo o elige un comienzo. También
+            puedes volver a <span className="font-medium text-foreground">Preguntar</span> para no elegir oficio.
+          </>
+        )}
       </p>
       <div className="mt-5 flex flex-wrap gap-2">
         <Button variant="secondary" onClick={onBrowseSkins}>
