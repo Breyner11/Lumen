@@ -108,6 +108,29 @@ const KNOWN: Array<{ match: RegExp; title: string; body: string }> = [
       '- "Las ciudades costeras suelen crecer alrededor del puerto."',
     ].join("\n"),
   },
+  {
+    match: /\bejemplos?\s+de\s+(una?\s+)?ciudad(?:es)?\b/i,
+    title: "Ejemplos de ciudad",
+    body: [
+      "Una ciudad es un asentamiento urbano con mucha población, servicios y gobierno local. Estos son ejemplos claros:",
+      "",
+      "**Ciudades concretas**",
+      "",
+      "- **Bogotá (Colombia):** capital andina y centro administrativo del país.",
+      "- **Ciudad de México (México):** una de las mayores metrópolis de América Latina.",
+      "- **Buenos Aires (Argentina):** capital del Cono Sur, con fuerte peso cultural y portuario.",
+      "- **Madrid (España):** capital española, sede del gobierno y gran nodo de transporte.",
+      "- **Tokio (Japón):** megaciudad asiática, referente de densidad urbana y transporte.",
+      "- **París (Francia):** capital europea reconocida por su patrimonio y turismo.",
+      "",
+      "**Tipos de ciudad (con ejemplo)**",
+      "",
+      "- **Capital:** sede del gobierno (Bogotá, Madrid).",
+      "- **Portuaria:** crece alrededor del mar o un río navegable (Cartagena, Barcelona).",
+      "- **Industrial:** marcada por fábricas y logística (Turín, Medellín en su etapa textil).",
+      "- **Turística:** vive en buena parte del visitante (Cusco, Venecia).",
+    ].join("\n"),
+  },
 ];
 
 export async function researchBrief(
@@ -189,13 +212,20 @@ export function buildResearchDraft(
   const sections: string[] = heading ? [`**${heading}**`, ""] : [];
 
   const queryTerms = tokenizeQuery(question);
+  const seen = new Set<string>();
   const useful = hits
     .filter((hit) => hitLooksRelevant(hit, queryTerms))
     .map((hit) => ({
       title: cleanHitTitle(hit.chunk.title, hit.chunk.source),
       text: cleanHitText(hit.chunk.text),
     }))
-    .filter((item) => item.text.length > 40 && !/^[a-záéíóúüñ]\s/.test(item.text.trim()))
+    .filter((item) => isUsableSourceSnippet(item.text))
+    .filter((item) => {
+      const key = normalizeText(item.text).slice(0, 96);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .slice(0, 6);
 
   if (useful.length) {
@@ -215,6 +245,29 @@ export function buildResearchDraft(
   );
 
   return sections.join("\n");
+}
+
+/** Descarta scrapes truncados, marketing vacío o cortes a mitad de frase. */
+export function isUsableSourceSnippet(text: string): boolean {
+  const clean = text.trim();
+  if (clean.length < 40) return false;
+  if (/^[a-záéíóúüñ]\s/.test(clean)) return false;
+  if (/^[\-–—(•*\d.)\s]+/.test(clean) && clean.length < 90) return false;
+  if (isTruncatedSentence(clean)) return false;
+  if (isEnglishHeavy(clean)) return false;
+  if (
+    /\b(en este art[ií]culo|exploraremos|descubre qu[eé]|haz clic|leer m[aá]s|sigue leyendo)\b/i.test(
+      clean,
+    )
+  ) {
+    return false;
+  }
+  // Corte típico por límite de caracteres: termina en artículo/preposición o palabra a medias.
+  if (/\b(el|la|los|las|de|del|con|para|y|o|un|una|que|qu)\s*$/i.test(clean)) return false;
+  if (/[a-záéíóúüñ]{1,3}$/i.test(clean) && !/[.!?…»”"]$/.test(clean) && clean.length >= 200) {
+    return false;
+  }
+  return true;
 }
 
 /** Respuestas tipo diccionario: definición, significados, ejemplos y sinónimos. */
@@ -579,10 +632,11 @@ function cleanHitTitle(rawTitle: string, source?: string): string {
 }
 
 function cleanHitText(raw: string): string {
-  return raw
+  let text = raw
     .replace(/^#+\s*/gm, "")
     .replace(/\bAprendizaje(?:\s+web)?:\s*/gi, "")
     .replace(/\bFecha\s*\([^)]*\):\s*/gi, "")
+    .replace(/\bHechos clave\b[:\s]*/gi, " ")
     .replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ")
     .replace(/https?:\/\/\S+/g, " ")
     .replace(/\|\s*Spanish to English Translation[^.]*/gi, " ")
@@ -590,9 +644,27 @@ function cleanHitText(raw: string): string {
     .replace(/Learn the meaning and usage of[^.]*/gi, " ")
     .replace(/\binjuries\b/gi, " ")
     .replace(/\([^)]{0,40}\)\s*[-–—]\s*/g, " ")
+    .replace(/^\s*[-–—(•*]+\s*/g, "")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 320);
+    .trim();
+
+  // Si quedó un resto de título en minúsculas antes de la frase útil, córtalo.
+  const sentenceStart = text.search(/[A-ZÁÉÍÓÚÜÑ¿¡«"“0-9]/);
+  if (sentenceStart > 0 && sentenceStart <= 48) {
+    text = text.slice(sentenceStart).trim();
+  }
+
+  if (text.length > 320) {
+    const clipped = text.slice(0, 320);
+    const boundary = Math.max(
+      clipped.lastIndexOf(". "),
+      clipped.lastIndexOf("! "),
+      clipped.lastIndexOf("? "),
+      clipped.lastIndexOf("… "),
+    );
+    text = boundary >= 120 ? clipped.slice(0, boundary + 1).trim() : clipped.trim();
+  }
+  return text;
 }
 
 export function chooseResearchAnswer(

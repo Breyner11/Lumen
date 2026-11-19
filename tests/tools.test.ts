@@ -114,6 +114,36 @@ test("investigar define ciudades como ficha y no demografía", async () => {
   assert.doesNotMatch(result.answer, /Chiclayo|Huancayo|Iquitos|Lima Metropolitana|32\s*%/i);
 });
 
+test("investigar responde ejemplos de ciudad con nombres claros", async () => {
+  const result = await runActivity("investigar", "ejemplos de ciudad");
+  assert.match(result.answer, /Bogot[aá]|Ciudad de M[eé]xico|Madrid|Tokio/i);
+  assert.match(result.answer, /Capital|Portuaria|Industrial|Tur[ií]stica/i);
+  assert.doesNotMatch(result.answer, /peciales|Ciudad Line\b|exploraremos ejemplos de ciudad qu/i);
+  assert.doesNotMatch(result.answer, /Descubre qu[eé] es una ciudad/i);
+});
+
+test("isUsableSourceSnippet rechaza scrapes truncados", async () => {
+  const { isUsableSourceSnippet } = await import("../lib/tools/research");
+  assert.equal(
+    isUsableSourceSnippet(
+      "peciales. Conoce la definición, la historia, los tipos y los problemas de las ciudades en el mundo.",
+    ),
+    false,
+  );
+  assert.equal(
+    isUsableSourceSnippet(
+      "En este artículo, exploraremos ejemplos de ciudad que destacan por su arquitectura impresionante.",
+    ),
+    false,
+  );
+  assert.equal(
+    isUsableSourceSnippet(
+      "El chihuahua es una de las razas más pequeñas del mundo y suele pesar menos de tres kilos.",
+    ),
+    true,
+  );
+});
+
 test("buildDefinitionDraft estructura una definición desde fuentes", async () => {
   const { buildDefinitionDraft, looksLikeDefinitionQuery, isUsableDefinitionSentence } = await import(
     "../lib/tools/research"
