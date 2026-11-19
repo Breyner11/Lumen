@@ -45,6 +45,7 @@ import type { ActivityId, Effort, ModelId, StoredMessage } from "@/lib/types";
 import { MarkdownView } from "@/components/markdown-view";
 import { PromptView } from "@/components/prompt-view";
 import { Badge } from "@/components/ui/badge";
+import { splitToolBadge } from "@/lib/tool-badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -1464,6 +1465,10 @@ function MessageBubble({
   onStyle?: (style: "corto" | "informativo" | "natural") => void;
 }) {
   const mine = message.role === "user";
+  const { tool, content: bodyContent } = mine
+    ? { tool: undefined, content: message.content }
+    : splitToolBadge(message.content);
+  const showThinking = !mine && pending && isThinkingStatus(bodyContent || message.content);
   return (
     <article
       className={`animate-rise ${mine ? "ml-8" : "mr-8"}`}
@@ -1478,8 +1483,13 @@ function MessageBubble({
         }
       >
         {!mine && (
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <Badge variant="outline">{message.mode === "model" ? "DeepSeek" : "Taller"}</Badge>
+            {tool ? (
+              <Badge variant="secondary" className="font-normal text-muted-foreground">
+                {tool}
+              </Badge>
+            ) : null}
           </div>
         )}
         {message.reasoning && (
@@ -1490,11 +1500,11 @@ function MessageBubble({
         )}
         {mine ? (
           <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
-        ) : pending && isThinkingStatus(message.content) ? (
-          <ThinkingStatus label={normalizeStatusLabel(message.content)} />
+        ) : showThinking ? (
+          <ThinkingStatus label={normalizeStatusLabel(bodyContent || message.content)} />
         ) : (
           <MarkdownView
-            text={message.content || (pending ? "" : "…")}
+            text={bodyContent || (pending ? "" : "…")}
             images={message.images}
             sources={message.sources}
           />

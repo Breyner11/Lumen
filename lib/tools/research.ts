@@ -120,7 +120,8 @@ export function buildResearchDraft(
   hits: RagHit[],
   known?: { title: string; body: string },
 ): string {
-  const sections: string[] = [`**${question}**`, ""];
+  const heading = cleanQuestionHeading(question);
+  const sections: string[] = heading ? [`**${heading}**`, ""] : [];
 
   if (known) {
     sections.push(`**${known.title}**`, "", known.body, "");
@@ -128,9 +129,8 @@ export function buildResearchDraft(
 
   const useful = hits
     .map((hit) => ({
-      title: hit.chunk.title.replace(/\s+/g, " ").trim(),
-      text: hit.chunk.text.replace(/\s+/g, " ").trim().slice(0, 320),
-      source: hit.chunk.source,
+      title: cleanHitTitle(hit.chunk.title, hit.chunk.source),
+      text: cleanHitText(hit.chunk.text),
     }))
     .filter((item) => item.text.length > 40)
     .slice(0, 6);
@@ -154,6 +154,41 @@ export function buildResearchDraft(
   );
 
   return sections.join("\n");
+}
+
+function cleanQuestionHeading(question: string): string {
+  const q = question.replace(/\s+/g, " ").trim();
+  if (q.length < 3) return "";
+  if (q.length <= 72) return q.charAt(0).toUpperCase() + q.slice(1);
+  return `${q.slice(0, 69).trim()}…`;
+}
+
+function cleanHitTitle(rawTitle: string, source?: string): string {
+  let title = rawTitle.replace(/\s+/g, " ").trim();
+  title = title.replace(/^Aprendizaje(?:\s+web)?:\s*/i, "");
+  title = title.split(/\s+Fecha\s*\(/i)[0]?.trim() || title;
+  title = title.split(/\s*##\s*/)[0]?.trim() || title;
+  if (/^https?:\/\//i.test(title) && source) {
+    try {
+      title = new URL(source).hostname.replace(/^www\./, "");
+    } catch {
+      /* keep */
+    }
+  }
+  if (title.length > 56) title = `${title.slice(0, 53).trim()}…`;
+  return title || "Fuente";
+}
+
+function cleanHitText(raw: string): string {
+  return raw
+    .replace(/^#+\s*/gm, "")
+    .replace(/\bAprendizaje(?:\s+web)?:\s*/gi, "")
+    .replace(/\bFecha\s*\([^)]*\):\s*/gi, "")
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 280);
 }
 
 export function chooseResearchAnswer(

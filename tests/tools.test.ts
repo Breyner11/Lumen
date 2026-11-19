@@ -109,8 +109,8 @@ test("buildResearchDraft arma secciones con fuentes", async () => {
         chunk: {
           id: "2",
           documentId: "d2",
-          title: "Pomerania",
-          text: "El pomerania es un perro pequeño de compañía, de pelaje abundante y carácter alerta.",
+          title: "Aprendizaje: perros",
+          text: "# Aprendizaje web: perros Fecha (America/Bogota): 2026-11-18 El pomerania es un perro pequeño de compañía.",
           index: 1,
         },
       },
@@ -118,8 +118,19 @@ test("buildResearchDraft arma secciones con fuentes", async () => {
   );
   assert.match(draft, /Qué dicen las fuentes/);
   assert.match(draft, /Chihuahua/);
-  assert.match(draft, /Pomerania/);
+  assert.match(draft, /pomerania/i);
+  assert.match(draft, /\*\*perros\*\*/i);
+  assert.doesNotMatch(draft, /Aprendizaje: perros/);
+  assert.doesNotMatch(draft, /# Aprendizaje/);
   assert.doesNotMatch(draft, /guanaco|caballo/i);
+});
+
+test("splitToolBadge separa la etiqueta de herramienta", async () => {
+  const { splitToolBadge } = await import("../lib/tool-badge");
+  const split = splitToolBadge("_Herramienta: Investigar_\n\n**perros**\n\nTexto");
+  assert.equal(split.tool, "Investigar");
+  assert.match(split.content, /^\*\*perros\*\*/);
+  assert.doesNotMatch(split.content, /Herramienta/);
 });
 
 test("chooseResearchAnswer conserva el borrador si el polish es relleno", async () => {

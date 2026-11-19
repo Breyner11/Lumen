@@ -116,8 +116,7 @@ function composeStream(request: ChatRequest, signal: AbortSignal): ReadableStrea
 
       try {
         // Primer byte inmediato: evita "Failed to fetch" por conexión idle.
-        const searching =
-          request.activity === "investigar" || request.activity === "aprender";
+        const searching = request.activity === "investigar";
         safeEnqueue({
           type: "status",
           text: searching ? "Buscando información…" : "Pensando…",

@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { ExternalLink, Link2, X } from "lucide-react";
 import { stripCitationBlocks } from "@/lib/rag/citations";
+import { splitToolBadge } from "@/lib/tool-badge";
 
 export function MarkdownView({
   text,
@@ -13,7 +14,8 @@ export function MarkdownView({
   images?: Array<{ url: string; title?: string }>;
   sources?: Array<{ title: string; url: string }>;
 }) {
-  const { thinking, content: afterThink } = splitThinking(text);
+  const withoutTool = splitToolBadge(text).content;
+  const { thinking, content: afterThink } = splitThinking(withoutTool);
   const stripped = stripCitationBlocks(afterThink);
   const content = stripped.content;
   const images = imagesProp?.length ? imagesProp : stripped.images;
@@ -239,22 +241,25 @@ function renderText(source: string, keyBase: number): ReactNode[] {
 }
 
 function inline(source: string): ReactNode[] {
-  const pattern = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
+  const pattern =
+    /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\n]+\*|_[^_\n]+_|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
   const nodes: ReactNode[] = [];
   let last = 0;
   for (const match of source.matchAll(pattern)) {
     const index = match.index ?? 0;
     if (index > last) nodes.push(escapeText(source.slice(last, index)));
     const token = match[0];
-    if (token.startsWith("**")) nodes.push(<strong key={index}>{escapeText(token.slice(2, -2))}</strong>);
-    else if (token.startsWith("`")) {
+    if (token.startsWith("**") || token.startsWith("__")) {
+      nodes.push(<strong key={index}>{escapeText(token.slice(2, -2))}</strong>);
+    } else if (token.startsWith("`")) {
       nodes.push(
         <code key={index} className="rounded bg-ink/5 px-1 py-0.5 font-mono text-[0.92em]">
           {escapeText(token.slice(1, -1))}
         </code>,
       );
-    } else if (token.startsWith("*")) nodes.push(<em key={index}>{escapeText(token.slice(1, -1))}</em>);
-    else {
+    } else if (token.startsWith("*") || token.startsWith("_")) {
+      nodes.push(<em key={index}>{escapeText(token.slice(1, -1))}</em>);
+    } else {
       const linked = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(token);
       if (linked) {
         nodes.push(
